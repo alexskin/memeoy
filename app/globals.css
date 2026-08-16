@@ -262,7 +262,7 @@ tr:hover td {
   text-align: center;
 }
 
-button.action {
+.action {
   font-family: var(--mono);
   font-size: 11px;
   padding: 5px 12px;
@@ -271,18 +271,22 @@ button.action {
   background: var(--panel-2);
   color: var(--text);
   cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
-button.action:hover {
+.action:hover {
   background: var(--panel-hover);
 }
 
-button.action.accept {
+.action.accept {
   border-color: var(--long);
   color: var(--long);
 }
 
-button.action.reject {
+.action.reject {
   border-color: var(--short);
   color: var(--short);
 }
