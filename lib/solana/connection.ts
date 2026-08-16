@@ -14,6 +14,9 @@ let _connection: Connection | null = null;
 
 export function getConnection(): Connection {
   if (!_connection) {
+    if (!RPC_ENDPOINT || !RPC_WEBSOCKET_ENDPOINT) {
+      throw new Error('RPC_ENDPOINT/RPC_WEBSOCKET_ENDPOINT are not set - copy .env.example to .env.local and fill them in');
+    }
     _connection = new Connection(RPC_ENDPOINT, {
       wsEndpoint: RPC_WEBSOCKET_ENDPOINT,
       commitment: COMMITMENT_LEVEL,

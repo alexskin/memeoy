@@ -30,6 +30,7 @@ import {
   COMMITMENT_LEVEL,
   PRE_LOAD_EXISTING_MARKETS,
   RPC_ENDPOINT,
+  RPC_WEBSOCKET_ENDPOINT,
   WORKER_WS_PORT,
 } from '../lib/config/env';
 import { getConnection } from '../lib/solana/connection';
@@ -116,6 +117,15 @@ interface DetectionContext {
 
 async function main() {
   logger.info({}, 'Memeoy worker starting...');
+
+  // The worker (unlike the dashboard, which can run RPC-free against a
+  // Turso mirror on Vercel - see lib/config/env.ts) genuinely cannot do
+  // anything without chain access. Fail loudly and immediately rather than
+  // leaving it to whichever RPC call happens to run first.
+  if (!RPC_ENDPOINT || !RPC_WEBSOCKET_ENDPOINT) {
+    logger.error({}, 'RPC_ENDPOINT/RPC_WEBSOCKET_ENDPOINT are not set - copy .env.example to .env.local and fill them in. The worker cannot run without RPC access.');
+    process.exit(1);
+  }
 
   // Must be first: refuses to start (rather than silently corrupting the
   // shared balance) if another worker is already running against this DB.

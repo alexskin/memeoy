@@ -74,7 +74,7 @@ When you're ready, in the dashboard's **Strategy** tab, change **Trading mode** 
 
 You can host a public, read-only mirror of the dashboard on Vercel - useful for showing the bot's paper-trading results to anyone without exposing any controls or requiring a wallet anywhere near it. **Vercel cannot run the worker** (no persistent processes there), so this only ever deploys the dashboard; your worker keeps running wherever it already runs today, and pushes a copy of its data to a small hosted database the Vercel deployment reads from.
 
-1. Create a free [Turso](https://turso.tech) database and get its URL + auth token (`turso db create`, then `turso db show --url` and `turso db tokens create`).
+1. Create a free [Turso](https://turso.tech) database - either via the [Turso web dashboard](https://app.turso.tech) (create a database, open it, its connection URL is shown on the database's detail page, and you can generate an auth token from there too) or the CLI (`turso db create`, then `turso db show --url` and `turso db tokens create`). Either way you end up with a `libsql://...` URL and a token.
 2. Run the one-time schema setup: `npx tsx --env-file=.env.local scripts/migrateTurso.ts` (after adding the two vars below to `.env.local`).
 3. Add `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` to your **local** `.env.local` too - this is what turns on your local worker's periodic sync job (every 20s, purely additive, never touches the trading logic).
 4. Push this repo to GitHub if you haven't already, then `git checkout -b prod && git push -u origin prod`. This branch is meant to stay in sync with `main` (`git checkout prod && git merge main && git push` to ship an update) - the dashboard code doesn't differ between branches, only which env vars are set where.

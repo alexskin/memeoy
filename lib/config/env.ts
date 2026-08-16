@@ -1,14 +1,18 @@
 // Infra-level env vars only - NEVER a wallet/private key. See .env.example.
-function required(name: string): string {
-  const value = process.env[name];
-  if (!value) {
-    throw new Error(`${name} is not set - copy .env.example to .env.local and fill it in`);
-  }
-  return value;
-}
-
-export const RPC_ENDPOINT = required('RPC_ENDPOINT');
-export const RPC_WEBSOCKET_ENDPOINT = required('RPC_WEBSOCKET_ENDPOINT');
+//
+// RPC_ENDPOINT/RPC_WEBSOCKET_ENDPOINT are deliberately NOT validated here
+// (used to throw at import time) - this module is transitively imported by
+// code that's reachable from the Next.js app (e.g. app/api/agent/run/route.ts
+// -> lib/agent/agentRunner.ts -> lib/agent/llmTuner.ts -> here, just for
+// ANTHROPIC_API_KEY), and the public read-only Vercel dashboard legitimately
+// never sets an RPC endpoint at all - it never touches Solana RPC, only
+// Turso (see lib/dbRead.ts). A throwing top-level statement in a module
+// touched from that path would crash the dashboard for a reason that has
+// nothing to do with what it actually needed. The worker - which genuinely
+// cannot function without RPC access - validates this explicitly and fails
+// fast at the top of scripts/worker.ts's main() instead.
+export const RPC_ENDPOINT = process.env.RPC_ENDPOINT || '';
+export const RPC_WEBSOCKET_ENDPOINT = process.env.RPC_WEBSOCKET_ENDPOINT || '';
 
 // Derived from RPC_ENDPOINT rather than a separate env var, since the
 // Helius RPC URL already carries it (?api-key=...) - used only for the
