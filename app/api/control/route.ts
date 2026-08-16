@@ -1,16 +1,21 @@
 import { NextResponse } from 'next/server';
-import { getWorkerControlState, requestSellAll, setWorkerControlState, WorkerControlState } from '../../../lib/db';
+import { getWorkerControlState, isHostedReadOnly } from '../../../lib/dbRead';
+import { requestSellAll, setWorkerControlState, WorkerControlState } from '../../../lib/db';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
-  return NextResponse.json({ state: getWorkerControlState() });
+  return NextResponse.json({ state: await getWorkerControlState() });
 }
 
 const VALID_ACTIONS = ['pause', 'start', 'stop', 'sellAll'] as const;
 type Action = (typeof VALID_ACTIONS)[number];
 
 export async function POST(request: Request) {
+  if (isHostedReadOnly()) {
+    return NextResponse.json({ error: 'read-only' }, { status: 403 });
+  }
+
   const body = (await request.json().catch(() => ({}))) as { action?: Action };
 
   if (!body.action || !VALID_ACTIONS.includes(body.action)) {

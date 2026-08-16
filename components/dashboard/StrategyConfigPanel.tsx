@@ -55,10 +55,12 @@ export function StrategyConfigPanel({
   activeVersion,
   history,
   onSave,
+  readOnly,
 }: {
   activeVersion: StrategyConfigVersion;
   history: StrategyConfigVersion[];
   onSave: (config: StrategyConfig) => Promise<void>;
+  readOnly?: boolean;
 }) {
   const [draft, setDraft] = useState<StrategyConfig>(activeVersion.config);
   const [saving, setSaving] = useState(false);
@@ -73,6 +75,7 @@ export function StrategyConfigPanel({
             {type === 'select' ? (
               <select
                 value={String(draft[key])}
+                disabled={readOnly}
                 onChange={(e) =>
                   setDraft({
                     ...draft,
@@ -90,6 +93,7 @@ export function StrategyConfigPanel({
               <input
                 type="number"
                 value={draft[key] as number}
+                disabled={readOnly}
                 onChange={(e) => setDraft({ ...draft, [key]: Number(e.target.value) } as StrategyConfig)}
               />
             )}
@@ -97,24 +101,28 @@ export function StrategyConfigPanel({
         ))}
       </div>
 
-      <button
-        className="action accept"
-        disabled={!dirty || saving}
-        onClick={async () => {
-          setSaving(true);
-          try {
-            await onSave(draft);
-          } finally {
-            setSaving(false);
-          }
-        }}
-      >
-        {saving ? 'Saving…' : 'Save as new version'}
-      </button>
-      {dirty && (
-        <button className="action" style={{ marginLeft: 8 }} onClick={() => setDraft(activeVersion.config)}>
-          Reset
-        </button>
+      {!readOnly && (
+        <>
+          <button
+            className="action accept"
+            disabled={!dirty || saving}
+            onClick={async () => {
+              setSaving(true);
+              try {
+                await onSave(draft);
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            {saving ? 'Saving…' : 'Save as new version'}
+          </button>
+          {dirty && (
+            <button className="action" style={{ marginLeft: 8 }} onClick={() => setDraft(activeVersion.config)}>
+              Reset
+            </button>
+          )}
+        </>
       )}
 
       <h2 style={{ marginTop: 24 }}>Version history</h2>

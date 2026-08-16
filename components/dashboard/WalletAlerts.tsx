@@ -8,10 +8,12 @@ export function WalletAlerts({
   alerts,
   config,
   onSave,
+  readOnly,
 }: {
   alerts: WalletAlert[];
   config: StrategyConfig;
   onSave: (config: StrategyConfig) => Promise<void>;
+  readOnly?: boolean;
 }) {
   const [address, setAddress] = useState('');
   const [label, setLabel] = useState('');
@@ -43,25 +45,27 @@ export function WalletAlerts({
     <div>
       <div className="panel" style={{ margin: '0 0 16px' }}>
         <h2>Tracked wallets</h2>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
-          <input
-            type="text"
-            placeholder="Wallet address"
-            value={address}
-            onChange={(e) => setAddress(e.target.value)}
-            style={{ flex: '2 1 260px', width: 'auto' }}
-          />
-          <input
-            type="text"
-            placeholder="Label (optional)"
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-            style={{ flex: '1 1 140px', width: 'auto' }}
-          />
-          <button className="action accept" disabled={busy || !address.trim()} onClick={addWallet}>
-            Add wallet
-          </button>
-        </div>
+        {!readOnly && (
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+            <input
+              type="text"
+              placeholder="Wallet address"
+              value={address}
+              onChange={(e) => setAddress(e.target.value)}
+              style={{ flex: '2 1 260px', width: 'auto' }}
+            />
+            <input
+              type="text"
+              placeholder="Label (optional)"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              style={{ flex: '1 1 140px', width: 'auto' }}
+            />
+            <button className="action accept" disabled={busy || !address.trim()} onClick={addWallet}>
+              Add wallet
+            </button>
+          </div>
+        )}
 
         {config.trackedWallets.length === 0 ? (
           <div className="empty">No wallets tracked yet - add one above to get advisory alerts whenever it buys something.</div>
@@ -71,7 +75,7 @@ export function WalletAlerts({
               <tr>
                 <th>Label</th>
                 <th>Address</th>
-                <th></th>
+                {!readOnly && <th></th>}
               </tr>
             </thead>
             <tbody>
@@ -79,11 +83,13 @@ export function WalletAlerts({
                 <tr key={w.address}>
                   <td>{w.label || '—'}</td>
                   <td style={{ fontSize: 11, whiteSpace: 'nowrap' }}>{w.address}</td>
-                  <td>
-                    <button className="action reject" disabled={busy} onClick={() => removeWallet(w.address)}>
-                      Remove
-                    </button>
-                  </td>
+                  {!readOnly && (
+                    <td>
+                      <button className="action reject" disabled={busy} onClick={() => removeWallet(w.address)}>
+                        Remove
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

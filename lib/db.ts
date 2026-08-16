@@ -80,7 +80,7 @@ export function getSellAllRequestedAt(): number {
 
 // ---------- strategy config versions ----------
 
-function rowToConfigVersion(row: any): StrategyConfigVersion {
+export function rowToConfigVersion(row: any): StrategyConfigVersion {
   return {
     id: row.id,
     versionNumber: row.version_number,
@@ -190,7 +190,10 @@ export function updatePoolStatus(id: number, status: DetectedPool['status']) {
   getDb().prepare(`UPDATE detected_pools SET status = ? WHERE id = ?`).run(status, id);
 }
 
-function rowToDetectedPool(row: any): DetectedPool {
+// Exported for reuse by lib/dbRead.ts's Turso branch - libSQL result rows
+// expose columns as named properties the same way better-sqlite3 rows do,
+// so these mapping functions work unchanged against either source.
+export function rowToDetectedPool(row: any): DetectedPool {
   return {
     id: row.id,
     poolId: row.pool_id,
@@ -262,7 +265,7 @@ export function insertMomentumSnapshot(s: Omit<MomentumSnapshot, 'id'>): number 
   return info.lastInsertRowid as number;
 }
 
-function rowToMomentumSnapshot(row: any): MomentumSnapshot {
+export function rowToMomentumSnapshot(row: any): MomentumSnapshot {
   return {
     id: row.id,
     detectedPoolId: row.detected_pool_id,
@@ -393,7 +396,7 @@ export function insertAgentDecision(d: Omit<AgentDecision, 'id'>): number {
   return info.lastInsertRowid as number;
 }
 
-function rowToAgentDecision(row: any): AgentDecision {
+export function rowToAgentDecision(row: any): AgentDecision {
   return {
     id: row.id,
     detectedPoolId: row.detected_pool_id,
@@ -504,19 +507,23 @@ export function getLatestPremigrationSnapshotBeforeBuy(detectedPoolId: number, b
   return row ? rowToPremigrationSnapshot(row) : null;
 }
 
+export function rowToFilterOutcome(row: any): FilterOutcome {
+  return {
+    detectedPoolId: row.detected_pool_id,
+    filterName: row.filter_name,
+    pass: !!row.pass,
+    message: row.message ?? undefined,
+    attemptNumber: row.attempt_number,
+    configVersionId: row.config_version_id,
+    checkedAt: row.checked_at,
+  };
+}
+
 export function getPoolFilterResults(detectedPoolId: number): FilterOutcome[] {
   return getDb()
     .prepare(`SELECT * FROM filter_results WHERE detected_pool_id = ? ORDER BY checked_at ASC`)
     .all(detectedPoolId)
-    .map((row: any) => ({
-      detectedPoolId: row.detected_pool_id,
-      filterName: row.filter_name,
-      pass: !!row.pass,
-      message: row.message ?? undefined,
-      attemptNumber: row.attempt_number,
-      configVersionId: row.config_version_id,
-      checkedAt: row.checked_at,
-    }));
+    .map(rowToFilterOutcome);
 }
 
 // ---------- filter results ----------
@@ -552,7 +559,7 @@ export function setFillPositionId(fillId: number, positionId: number) {
   getDb().prepare(`UPDATE fills SET position_id = ? WHERE id = ?`).run(positionId, fillId);
 }
 
-function rowToFill(row: any): SimulatedFill {
+export function rowToFill(row: any): SimulatedFill {
   return {
     id: row.id,
     positionId: row.position_id,
@@ -680,28 +687,32 @@ export function insertPartialExit(exit: Omit<PartialExit, 'id'>): number {
   return info.lastInsertRowid as number;
 }
 
+export function rowToPartialExit(row: any): PartialExit {
+  return {
+    id: row.id,
+    positionId: row.position_id,
+    exitFillId: row.exit_fill_id,
+    targetPct: row.target_pct,
+    sellFractionOfOriginal: row.sell_fraction_of_original,
+    baseAmountSold: row.base_amount_sold,
+    quoteSizeInPortion: row.quote_size_in_portion,
+    quoteReceivedUi: row.quote_received_ui,
+    exitPrice: row.exit_price,
+    realizedPnlQuote: row.realized_pnl_quote,
+    realizedPnlPct: row.realized_pnl_pct,
+    reason: row.reason,
+    closedAt: row.closed_at,
+  };
+}
+
 export function getPartialExitsForPosition(positionId: number): PartialExit[] {
   return getDb()
     .prepare(`SELECT * FROM partial_exits WHERE position_id = ? ORDER BY closed_at ASC`)
     .all(positionId)
-    .map((row: any) => ({
-      id: row.id,
-      positionId: row.position_id,
-      exitFillId: row.exit_fill_id,
-      targetPct: row.target_pct,
-      sellFractionOfOriginal: row.sell_fraction_of_original,
-      baseAmountSold: row.base_amount_sold,
-      quoteSizeInPortion: row.quote_size_in_portion,
-      quoteReceivedUi: row.quote_received_ui,
-      exitPrice: row.exit_price,
-      realizedPnlQuote: row.realized_pnl_quote,
-      realizedPnlPct: row.realized_pnl_pct,
-      reason: row.reason,
-      closedAt: row.closed_at,
-    }));
+    .map(rowToPartialExit);
 }
 
-function rowToPosition(row: any): Position {
+export function rowToPosition(row: any): Position {
   return {
     id: row.id,
     detectedPoolId: row.detected_pool_id,
@@ -760,20 +771,24 @@ export function insertEquitySnapshot(snapshot: EquitySnapshot) {
     .run(snapshot as any);
 }
 
+export function rowToEquitySnapshot(row: any): EquitySnapshot {
+  return {
+    ts: row.ts,
+    virtualBalanceQuote: row.virtual_balance_quote,
+    openUnrealizedQuote: row.open_unrealized_quote,
+    totalEquityQuote: row.total_equity_quote,
+    realizedPnlCumulative: row.realized_pnl_cumulative,
+    numOpenPositions: row.num_open_positions,
+    numClosedTrades: row.num_closed_trades,
+  };
+}
+
 export function getEquitySnapshots(limit = 1000): EquitySnapshot[] {
   return getDb()
     .prepare(`SELECT * FROM equity_snapshots ORDER BY ts DESC LIMIT ?`)
     .all(limit)
     .reverse()
-    .map((row: any) => ({
-      ts: row.ts,
-      virtualBalanceQuote: row.virtual_balance_quote,
-      openUnrealizedQuote: row.open_unrealized_quote,
-      totalEquityQuote: row.total_equity_quote,
-      realizedPnlCumulative: row.realized_pnl_cumulative,
-      numOpenPositions: row.num_open_positions,
-      numClosedTrades: row.num_closed_trades,
-    }));
+    .map(rowToEquitySnapshot);
 }
 
 // ---------- agent suggestions ----------
@@ -807,7 +822,7 @@ export function updateAgentSuggestionStatus(id: number, status: AgentSuggestionS
   }
 }
 
-function rowToSuggestion(row: any): AgentSuggestion {
+export function rowToSuggestion(row: any): AgentSuggestion {
   return {
     id: row.id,
     createdAt: row.created_at,
@@ -858,7 +873,7 @@ export function getLatestWalletAlertSignatures(walletAddress: string, limit = 50
   return new Set(rows.map((r) => r.signature));
 }
 
-function rowToWalletAlert(row: any): WalletAlert {
+export function rowToWalletAlert(row: any): WalletAlert {
   return {
     id: row.id,
     walletAddress: row.wallet_address,

@@ -14,6 +14,10 @@ import { WorkerControls, WorkerControlState } from '../components/dashboard/Work
 import { WalletAlerts } from '../components/dashboard/WalletAlerts';
 
 const WS_PORT = Number(process.env.NEXT_PUBLIC_WORKER_WS_PORT ?? 8787);
+// Only set to 'true' in the Vercel project's env vars for the public
+// read-only deployment (see README.md's "Public read-only dashboard on
+// Vercel" section) - a local `npm run dev` never sets this.
+const READ_ONLY = process.env.NEXT_PUBLIC_READ_ONLY === 'true';
 // Consolidated from the old 8-tab layout (Live/Watchlist/Wallet
 // Alerts/Positions/History/Equity/Strategy/Agent) around what's actually a
 // different concern, not what table happened to exist: Watcher owns the
@@ -233,7 +237,7 @@ export default function Page() {
               {activeVersion.config.tradingMode === 'live' ? 'LIVE — REAL FUNDS' : 'PAPER'}
             </span>
           )}
-          <WorkerControls state={controlState} onRefresh={refreshAll} />
+          {!READ_ONLY && <WorkerControls state={controlState} onRefresh={refreshAll} />}
           <ConnectionStatus wsConnected={connected} workerAlive={workerAlive} virtualBalance={virtualBalance} />
         </div>
       </div>
@@ -278,12 +282,12 @@ export default function Page() {
           {activeVersion && (
             <div className="panel">
               <h2>Strategy configuration</h2>
-              <StrategyConfigPanel activeVersion={activeVersion} history={history} onSave={saveConfig} />
+              <StrategyConfigPanel activeVersion={activeVersion} history={history} onSave={saveConfig} readOnly={READ_ONLY} />
             </div>
           )}
           <div className="panel">
             <h2>Self-tuning agent</h2>
-            <AgentLog suggestions={suggestions} onAccept={acceptSuggestion} onReject={rejectSuggestion} />
+            <AgentLog suggestions={suggestions} onAccept={acceptSuggestion} onReject={rejectSuggestion} readOnly={READ_ONLY} />
           </div>
         </>
       )}
@@ -291,7 +295,7 @@ export default function Page() {
       {tab === 'Wallet Alerts' && activeVersion && (
         <div className="panel">
           <h2>Wallet alerts</h2>
-          <WalletAlerts alerts={walletAlerts} config={activeVersion.config} onSave={saveConfig} />
+          <WalletAlerts alerts={walletAlerts} config={activeVersion.config} onSave={saveConfig} readOnly={READ_ONLY} />
         </div>
       )}
     </div>

@@ -83,6 +83,7 @@ import { getTokensBatch } from '../lib/dexscreener/client';
 import { DetectedPool } from '../lib/types';
 import { getLiveWallet } from '../lib/solana/wallet';
 import { initializeLiveBalance } from '../lib/portfolio/liveBalance';
+import { runTursoSync, tursoSyncEnabled } from '../lib/sync/tursoSync';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -822,6 +823,16 @@ async function main() {
       }
     }
   }, 2000);
+
+  // ---- optional Turso sync (public read-only dashboard, see README.md) ----
+  // No timer at all is created unless TURSO_DATABASE_URL is set - a user who
+  // never sets it up sees zero behavior change here.
+  if (tursoSyncEnabled()) {
+    logger.info({}, 'Turso sync enabled - mirroring a bounded recent window to Turso every 20s for the public dashboard');
+    setInterval(() => {
+      runTursoSync().catch((error) => logger.warn({ error: String(error) }, 'tursoSync tick failed, will retry next tick'));
+    }, 20_000);
+  }
 
   // ---- heartbeat ----
   // Reports actual pipeline liveness (last real pool event, last completed

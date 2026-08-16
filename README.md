@@ -1,5 +1,11 @@
 # Memeoy
 
+> [!WARNING]
+> ## ⚠ DO NOT RUN THIS `main` BRANCH LOCALLY ⚠
+> **`main` is the branch meant for the public Vercel dashboard deployment only.** It's what a live public link should point at.
+>
+> **If you want to self-host the full bot (the worker + dashboard on your own machine), switch to the [`local`](../../tree/local) branch instead.** Running `main` locally works too (the code doesn't actually differ), but `local` is where local setup is documented and intended — use it to avoid confusing yourself about which environment you're in.
+
 An AI-watched Solana memecoin trading bot. Paper mode by default, real market data, zero real funds until you explicitly turn it on.
 
 ## What it is
@@ -63,6 +69,22 @@ When you're ready, in the dashboard's **Strategy** tab, change **Trading mode** 
 1. Set `WALLET_PRIVATE_KEY` in `.env.local` — the secret key of a dedicated wallet you're willing to trade with, as a base58 string or a JSON byte array (the two formats Phantom/Solflare export directly). It's read only when a live swap is actually about to execute, never logged, and never sent anywhere except the local transaction-signing call.
 2. That wallet needs an existing **wrapped SOL (WSOL) token account** with the SOL you want to trade with already wrapped into it — wrap some SOL first (Phantom's swap screen, or `spl-token wrap`).
 3. Restart the worker after switching modes, so it can seed the dashboard's balance display from your wallet's real balance.
+
+## Public read-only dashboard on Vercel (optional)
+
+You can host a public, read-only mirror of the dashboard on Vercel - useful for showing the bot's paper-trading results to anyone without exposing any controls or requiring a wallet anywhere near it. **Vercel cannot run the worker** (no persistent processes there), so this only ever deploys the dashboard; your worker keeps running wherever it already runs today, and pushes a copy of its data to a small hosted database the Vercel deployment reads from.
+
+1. Create a free [Turso](https://turso.tech) database and get its URL + auth token (`turso db create`, then `turso db show --url` and `turso db tokens create`).
+2. Run the one-time schema setup: `npx tsx --env-file=.env.local scripts/migrateTurso.ts` (after adding the two vars below to `.env.local`).
+3. Add `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` to your **local** `.env.local` too - this is what turns on your local worker's periodic sync job (every 20s, purely additive, never touches the trading logic).
+4. Push this repo to GitHub if you haven't already, then `git checkout -b prod && git push -u origin prod`. This branch is meant to stay in sync with `main` (`git checkout prod && git merge main && git push` to ship an update) - the dashboard code doesn't differ between branches, only which env vars are set where.
+5. Create a Vercel project from your GitHub repo, pointed at the `prod` branch. In the Vercel project's environment variables, set:
+   - `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` - same values as step 3
+   - `NEXT_PUBLIC_READ_ONLY=true` - hides every control (PAUSE/STOP/SELL ALL, Strategy editing, wallet add/remove, agent accept/reject)
+   - `NEXT_PUBLIC_DISABLE_WS=true` - skips trying to reach your local worker's WebSocket server, which obviously isn't reachable from Vercel; the dashboard still refreshes every 30 seconds via polling
+6. Deploy. No wallet, no `WALLET_PRIVATE_KEY`, ever needs to go near Vercel - the public deployment only ever displays paper-trading data your local worker already produced.
+
+This also happens to cost nothing extra in Vercel usage regardless of how much traffic the public link gets: every API route on the dashboard only ever reads Turso, never Solana RPC, so it can't consume your Helius quota no matter how many people load the page.
 
 **Live execution currently only works on Raydium pools.** PumpSwap is the more common venue in practice, but this project has no verified, tested instruction format for its swap instruction — rather than guess at an encoding for a real-money transaction, PumpSwap candidates are skipped with a clear log line in live mode until that's built and verified. Everything else (filters, momentum, revival detection, the AI decision layer, the self-tuning agent) works identically across both modes.
 

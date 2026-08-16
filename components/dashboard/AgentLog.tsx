@@ -10,10 +10,12 @@ export function AgentLog({
   suggestions,
   onAccept,
   onReject,
+  readOnly,
 }: {
   suggestions: AgentSuggestion[];
   onAccept: (id: number) => Promise<void>;
   onReject: (id: number) => Promise<void>;
+  readOnly?: boolean;
 }) {
   if (suggestions.length === 0) {
     return (
@@ -43,7 +45,7 @@ export function AgentLog({
               </div>
             ))}
           </div>
-          {s.status === 'proposed' && (
+          {s.status === 'proposed' && !readOnly && (
             <div>
               <button className="action accept" onClick={() => onAccept(s.id)}>
                 Accept

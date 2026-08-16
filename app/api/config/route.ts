@@ -1,22 +1,28 @@
 import { NextResponse } from 'next/server';
-import { getActiveConfigVersion, insertConfigVersion } from '../../../lib/db';
+import { getActiveConfigVersion, isHostedReadOnly } from '../../../lib/dbRead';
+import { insertConfigVersion } from '../../../lib/db';
 import { StrategyConfig } from '../../../lib/types';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
-  return NextResponse.json({ activeVersion: getActiveConfigVersion() });
+  return NextResponse.json({ activeVersion: await getActiveConfigVersion() });
 }
 
 // Manual override: creates and applies a brand-new version (append-only
-// history - see plan section on strategy_config_versions).
+// history - see plan section on strategy_config_versions). Disabled on the
+// public read-only deployment (Turso configured) - writes only ever happen
+// against the local worker's DB, never against the Turso mirror.
 export async function POST(request: Request) {
+  if (isHostedReadOnly()) {
+    return NextResponse.json({ error: 'read-only' }, { status: 403 });
+  }
   const body = (await request.json()) as { config: StrategyConfig; rationale?: string };
-  const current = getActiveConfigVersion();
+  const currentVersion = await getActiveConfigVersion();
   const version = insertConfigVersion(
     body.config,
     'user',
-    current.id,
+    currentVersion.id,
     body.rationale ?? 'Manual edit via dashboard',
     true,
   );

@@ -15,6 +15,15 @@ export function useWorkerSocket(port: number, onMessage: (msg: WorkerMessage) =>
   onMessageRef.current = onMessage;
 
   useEffect(() => {
+    // Set only in the Vercel project's env vars for the public read-only
+    // deployment - there's no local worker WS server reachable from there,
+    // so don't even attempt to connect (would otherwise retry every 2s
+    // forever against an unreachable ws://127.0.0.1:8787). The dashboard
+    // still updates via app/page.tsx's existing 30s refreshAll() poll.
+    if (process.env.NEXT_PUBLIC_DISABLE_WS === 'true') {
+      return;
+    }
+
     let socket: WebSocket | null = null;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     let stopped = false;
