@@ -1,0 +1,299 @@
+'use client';
+import { useCallback, useEffect, useState } from 'react';
+import { useWorkerSocket, WorkerMessage } from '../lib/ws/client';
+import { AgentSuggestion, DetectedPool, EquitySnapshot, FilterOutcome, MomentumCriterionResult, StrategyConfig, StrategyConfigVersion, WalletAlert } from '../lib/types';
+import { WatcherTable, WatcherRow } from '../components/dashboard/WatcherTable';
+import { StatsStrip } from '../components/dashboard/StatsStrip';
+import { PositionsTable, LivePositionInfo, PositionRow } from '../components/dashboard/PositionsTable';
+import { TradeHistoryTable, TradeRow } from '../components/dashboard/TradeHistoryTable';
+import { EquityChart } from '../components/dashboard/EquityChart';
+import { StrategyConfigPanel } from '../components/dashboard/StrategyConfigPanel';
+import { AgentLog } from '../components/dashboard/AgentLog';
+import { ConnectionStatus } from '../components/dashboard/ConnectionStatus';
+import { WorkerControls, WorkerControlState } from '../components/dashboard/WorkerControls';
+import { WalletAlerts } from '../components/dashboard/WalletAlerts';
+
+const WS_PORT = Number(process.env.NEXT_PUBLIC_WORKER_WS_PORT ?? 8787);
+// Consolidated from the old 8-tab layout (Live/Watchlist/Wallet
+// Alerts/Positions/History/Equity/Strategy/Agent) around what's actually a
+// different concern, not what table happened to exist: Watcher owns the
+// whole detection->decision lifecycle, Portfolio owns "what did the money
+// do", Strategy owns the config+tuner feedback loop.
+const TABS = ['Watcher', 'Portfolio', 'Strategy', 'Wallet Alerts'] as const;
+type Tab = (typeof TABS)[number];
+
+export default function Page() {
+  const [tab, setTab] = useState<Tab>('Watcher');
+
+  const [pools, setPools] = useState<WatcherRow[]>([]);
+  const [walletAlerts, setWalletAlerts] = useState<WalletAlert[]>([]);
+  const [positions, setPositions] = useState<PositionRow[]>([]);
+  const [livePositions, setLivePositions] = useState<Record<number, LivePositionInfo>>({});
+  const [trades, setTrades] = useState<TradeRow[]>([]);
+  const [snapshots, setSnapshots] = useState<EquitySnapshot[]>([]);
+  const [activeVersion, setActiveVersion] = useState<StrategyConfigVersion | null>(null);
+  const [history, setHistory] = useState<StrategyConfigVersion[]>([]);
+  const [suggestions, setSuggestions] = useState<AgentSuggestion[]>([]);
+  const [workerAlive, setWorkerAlive] = useState<boolean | null>(null);
+  const [virtualBalance, setVirtualBalance] = useState<number | null>(null);
+  const [controlState, setControlState] = useState<WorkerControlState>('running');
+
+  const refreshAll = useCallback(async () => {
+    const [poolsRes, positionsRes, tradesRes, equityRes, configRes, historyRes, suggestionsRes, healthRes, controlRes, walletAlertsRes] =
+      await Promise.all([
+        fetch('/api/pools').then((r) => r.json()),
+        fetch('/api/positions').then((r) => r.json()),
+        fetch('/api/trades').then((r) => r.json()),
+        fetch('/api/equity').then((r) => r.json()),
+        fetch('/api/config').then((r) => r.json()),
+        fetch('/api/config/history').then((r) => r.json()),
+        fetch('/api/agent/suggestions').then((r) => r.json()),
+        fetch('/api/health').then((r) => r.json()),
+        fetch('/api/control').then((r) => r.json()),
+        fetch('/api/wallet-alerts').then((r) => r.json()),
+      ]);
+    setPools(poolsRes.pools);
+    setPositions(positionsRes.positions);
+    setTrades(tradesRes.trades);
+    setSnapshots(equityRes.snapshots);
+    setActiveVersion(configRes.activeVersion);
+    setHistory(historyRes.versions);
+    setSuggestions(suggestionsRes.suggestions);
+    setWorkerAlive(healthRes.workerAlive);
+    setVirtualBalance(healthRes.virtualBalanceQuote);
+    setControlState(controlRes.state);
+    setWalletAlerts(walletAlertsRes.alerts);
+  }, []);
+
+  useEffect(() => {
+    refreshAll();
+    const interval = setInterval(refreshAll, 30_000);
+    return () => clearInterval(interval);
+  }, [refreshAll]);
+
+  const onMessage = useCallback(
+    (msg: WorkerMessage) => {
+      switch (msg.event) {
+        case 'pool.detected': {
+          const p = msg.payload as DetectedPool;
+          setPools((prev) => [{ ...p, filterResults: [], latestMomentumSnapshot: null, latestAgentDecision: null }, ...prev].slice(0, 200));
+          break;
+        }
+        case 'filter.result': {
+          const f = msg.payload as FilterOutcome;
+          setPools((prev) =>
+            prev.map((pool) =>
+              pool.id === f.detectedPoolId ? { ...pool, filterResults: [...pool.filterResults, f] } : pool,
+            ),
+          );
+          break;
+        }
+        case 'pool.status': {
+          const { id, status } = msg.payload as { id: number; status: DetectedPool['status'] };
+          setPools((prev) => prev.map((pool) => (pool.id === id ? { ...pool, status } : pool)));
+          break;
+        }
+        case 'momentum.updated': {
+          const { detectedPoolId, pass, results } = msg.payload as {
+            detectedPoolId: number;
+            pass: boolean;
+            results: MomentumCriterionResult[];
+          };
+          setPools((prev) =>
+            prev.map((row) =>
+              row.id === detectedPoolId && row.latestMomentumSnapshot
+                ? { ...row, latestMomentumSnapshot: { ...row.latestMomentumSnapshot, pass, criteria: results, hasData: true } }
+                : row,
+            ),
+          );
+          break;
+        }
+        case 'agent.decision': {
+          const payload = msg.payload as {
+            detectedPoolId: number;
+            checkedAt: number;
+            momentumPass: boolean;
+            revivalPass: boolean;
+            revivalStrength: number;
+            degenScore: number | null;
+            degenVerdict: string | null;
+            action: 'buy' | 'skip';
+            confidence: number;
+            reasoning: string;
+            source: 'llm' | 'fallback';
+          };
+          setPools((prev) =>
+            prev.map((row) =>
+              row.id === payload.detectedPoolId
+                ? {
+                    ...row,
+                    latestAgentDecision: {
+                      id: -1,
+                      configVersionId: -1,
+                      detectedPoolId: payload.detectedPoolId,
+                      checkedAt: payload.checkedAt,
+                      momentumPass: payload.momentumPass,
+                      revivalPass: payload.revivalPass,
+                      revivalStrength: payload.revivalStrength,
+                      degenScore: payload.degenScore,
+                      degenVerdict: payload.degenVerdict,
+                      action: payload.action,
+                      confidence: payload.confidence,
+                      reasoning: payload.reasoning,
+                      source: payload.source,
+                    },
+                  }
+                : row,
+            ),
+          );
+          break;
+        }
+        case 'position.opened':
+          refreshAll();
+          break;
+        case 'position.updated': {
+          const info = msg.payload as { positionId: number } & LivePositionInfo;
+          setLivePositions((prev) => ({ ...prev, [info.positionId]: info }));
+          break;
+        }
+        case 'position.partialExit':
+          refreshAll();
+          break;
+        case 'position.closed':
+          refreshAll();
+          break;
+        case 'equity.snapshot':
+          refreshAll();
+          break;
+        case 'agent.suggestion':
+          refreshAll();
+          break;
+        case 'worker.heartbeat':
+          setWorkerAlive(true);
+          break;
+        case 'worker.state': {
+          const { state } = msg.payload as { state: WorkerControlState };
+          setControlState(state);
+          break;
+        }
+        case 'worker.sellAll':
+          refreshAll();
+          break;
+        case 'wallet.alert':
+          refreshAll();
+          break;
+      }
+    },
+    [refreshAll],
+  );
+
+  const { connected } = useWorkerSocket(WS_PORT, onMessage);
+
+  const saveConfig = useCallback(
+    async (config: StrategyConfig) => {
+      await fetch('/api/config', { method: 'POST', body: JSON.stringify({ config }) });
+      await refreshAll();
+    },
+    [refreshAll],
+  );
+
+  const acceptSuggestion = useCallback(
+    async (id: number) => {
+      await fetch(`/api/agent/suggestions/${id}`, { method: 'POST', body: JSON.stringify({ action: 'accept' }) });
+      await refreshAll();
+    },
+    [refreshAll],
+  );
+
+  const rejectSuggestion = useCallback(
+    async (id: number) => {
+      await fetch(`/api/agent/suggestions/${id}`, { method: 'POST', body: JSON.stringify({ action: 'reject' }) });
+      await refreshAll();
+    },
+    [refreshAll],
+  );
+
+  return (
+    <div className="wrap">
+      <div className="header">
+        <div>
+          <div className="eyebrow">Paper trading · no real funds</div>
+          <h1 className="title">Memeoy</h1>
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10 }}>
+          {activeVersion && (
+            <span
+              className="badge"
+              style={
+                activeVersion.config.tradingMode === 'live'
+                  ? { color: 'var(--short)', background: 'var(--short-dim)', fontSize: 11, padding: '4px 10px' }
+                  : { color: 'var(--long)', background: 'var(--long-dim)', fontSize: 11, padding: '4px 10px' }
+              }
+            >
+              {activeVersion.config.tradingMode === 'live' ? 'LIVE — REAL FUNDS' : 'PAPER'}
+            </span>
+          )}
+          <WorkerControls state={controlState} onRefresh={refreshAll} />
+          <ConnectionStatus wsConnected={connected} workerAlive={workerAlive} virtualBalance={virtualBalance} />
+        </div>
+      </div>
+
+      <div className="tabs">
+        {TABS.map((t) => (
+          <button key={t} className={`tab ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'Watcher' && (
+        <>
+          <StatsStrip openPositionsCount={positions.length} pools={pools} virtualBalance={virtualBalance} />
+          <div className="panel">
+            <h2>AI watcher — detection → decision → outcome</h2>
+            <WatcherTable rows={pools} />
+          </div>
+        </>
+      )}
+
+      {tab === 'Portfolio' && (
+        <>
+          <div className="panel">
+            <h2>Equity curve</h2>
+            <EquityChart snapshots={snapshots} />
+          </div>
+          <div className="panel">
+            <h2>Open positions</h2>
+            <PositionsTable positions={positions} live={livePositions} />
+          </div>
+          <div className="panel">
+            <h2>Closed trades</h2>
+            <TradeHistoryTable trades={trades} />
+          </div>
+        </>
+      )}
+
+      {tab === 'Strategy' && (
+        <>
+          {activeVersion && (
+            <div className="panel">
+              <h2>Strategy configuration</h2>
+              <StrategyConfigPanel activeVersion={activeVersion} history={history} onSave={saveConfig} />
+            </div>
+          )}
+          <div className="panel">
+            <h2>Self-tuning agent</h2>
+            <AgentLog suggestions={suggestions} onAccept={acceptSuggestion} onReject={rejectSuggestion} />
+          </div>
+        </>
+      )}
+
+      {tab === 'Wallet Alerts' && activeVersion && (
+        <div className="panel">
+          <h2>Wallet alerts</h2>
+          <WalletAlerts alerts={walletAlerts} config={activeVersion.config} onSave={saveConfig} />
+        </div>
+      )}
+    </div>
+  );
+}

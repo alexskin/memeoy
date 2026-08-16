@@ -1,0 +1,118 @@
+// The actual per-candidate judgment step, replacing the old "momentum pass
+// == buy" hard gate. Called once a candidate has already cleared the
+// deterministic momentum + revival gates (lib/watchlist/watchlistMonitor.ts)
+// - never on every watchlist tick - to keep Anthropic API usage bounded to
+// real near-buy candidates.
+//
+// Fail-safe by design: if ANTHROPIC_API_KEY is unset, the call errors, or the
+// response doesn't parse, this falls back to today's exact deterministic
+// behavior (buy iff momentum && revival passed) with source:'fallback' - the
+// bot never silently stalls because the LLM is unavailable. Every call - buy
+// AND skip - gets persisted (lib/db.ts's insertAgentDecision) with its
+// reasoning, so a "REFUSED" candidate stays visible with a reason instead of
+// silently vanishing (inspired by omotrades.com's live reasoning feed, which
+// explicitly logs refused setups, not just accepted trades - see the plan's
+// Context section).
+import { ANTHROPIC_API_KEY } from '../config/env';
+import { MomentumEvaluation } from '../dexscreener/momentumFilter';
+import { RevivalEvaluation } from '../dexscreener/revivalFilter';
+import { DegenScoreResult } from '../degenScore/client';
+import { AgentDecisionAction, AgentDecisionSource } from '../types';
+import { logger } from '../logger';
+
+const LLM_TIMEOUT_MS = 15000;
+
+export interface DecisionInput {
+  baseMint: string;
+  momentum: MomentumEvaluation;
+  revival: RevivalEvaluation;
+  degenScore: DegenScoreResult | null;
+  recentPerformance: string;
+}
+
+export interface Decision {
+  action: AgentDecisionAction;
+  confidence: number;
+  reasoning: string;
+  source: AgentDecisionSource;
+}
+
+function fallbackDecision(input: DecisionInput, reasoning: string): Decision {
+  // OR, not AND: momentum and revival are alternate paths to this judgment
+  // step (see watchlistMonitor.ts), never both true for the same candidate
+  // in practice (their age windows don't overlap) - whichever one passed is
+  // what got this candidate here, so the deterministic fallback should buy.
+  return {
+    action: input.momentum.pass || input.revival.pass ? 'buy' : 'skip',
+    confidence: 1,
+    reasoning,
+    source: 'fallback',
+  };
+}
+
+const SYSTEM_PROMPT = `You are the final judgment gate for a Solana memecoin PAPER-TRADING bot (simulated fills, no real funds, no real wallet). A candidate has already cleared two deterministic numeric gates (momentum + a "revival" pattern: pumped, went flat, just started a fresh small uptick). Your job is to decide whether this specific candidate is actually worth buying, or whether it's a manufactured/wash-traded bait pump dressed up to look like a real revival.
+
+You will be given: the momentum criteria results, the revival criteria results and a 0-100 strength score, an optional 0-100 "degen score" (how organic vs. manufactured the token's social/website presence feels - null if no link was found), and a summary of how similar past signal combinations actually performed.
+
+Weigh all of it together - don't just check that the numbers cleared their bars. A high revival strength with a low degen score (numbers look right, narrative looks fake) is exactly the kind of case where you should lean toward skipping. Use the recent-performance summary to calibrate how much to trust a given signal combination, not as a hard rule.
+
+Reply with EXACTLY this JSON shape, nothing else, no markdown fences: {"action": "buy" | "skip", "confidence": <0-1 number>, "reasoning": "<one sentence, under 40 words>"}`;
+
+export async function decideCandidate(input: DecisionInput): Promise<Decision> {
+  if (!ANTHROPIC_API_KEY) {
+    return fallbackDecision(input, 'fallback: no ANTHROPIC_API_KEY configured, deterministic gate only');
+  }
+
+  const userPrompt = `Mint: ${input.baseMint}
+Momentum criteria: ${JSON.stringify(input.momentum.results)}
+Revival criteria: ${JSON.stringify(input.revival.results)}
+Revival strength: ${input.revival.strengthScore}/100
+Degen score: ${input.degenScore ? `${input.degenScore.score}/100 - ${input.degenScore.verdict}` : 'not available (no social link found, or scoring failed)'}
+${input.recentPerformance}`;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-5',
+        max_tokens: 200,
+        system: SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: userPrompt }],
+      }),
+    });
+
+    if (!response.ok) {
+      logger.warn({ status: response.status, baseMint: input.baseMint }, 'decisionEngine: API call failed, falling back to deterministic gate');
+      return fallbackDecision(input, 'fallback: LLM API call failed');
+    }
+
+    const data = (await response.json()) as { content?: { type: string; text?: string }[] };
+    const text = data.content?.find((c) => c.type === 'text')?.text?.trim() ?? '';
+
+    const parsed = JSON.parse(text) as { action?: string; confidence?: number; reasoning?: string };
+    if (parsed.action !== 'buy' && parsed.action !== 'skip') {
+      throw new Error(`unexpected action: ${parsed.action}`);
+    }
+    const confidence = typeof parsed.confidence === 'number' ? Math.max(0, Math.min(1, parsed.confidence)) : 0.5;
+
+    return {
+      action: parsed.action,
+      confidence,
+      reasoning: parsed.reasoning ?? '(no reasoning provided)',
+      source: 'llm',
+    };
+  } catch (error) {
+    logger.warn({ error: String(error), baseMint: input.baseMint }, 'decisionEngine: request failed or unparseable, falling back to deterministic gate');
+    return fallbackDecision(input, 'fallback: LLM response failed or did not parse');
+  } finally {
+    clearTimeout(timeout);
+  }
+}
