@@ -86,13 +86,23 @@ export async function runTursoSync(window = DEFAULT_WINDOW): Promise<void> {
   // factored into a shared query fragment) because `?` placeholders are
   // positional across the whole statement - every appearance needs its own
   // `window` arg supplied in the same order.
+  //
+  // Same failure mode independently hit filter_results/agent_decisions:
+  // both also carry a detected_pool_id FK, and their own "last window rows
+  // by id" pull can easily reference a pool that's aged out of
+  // detected_pools' own window (pool-detection volume is much higher than
+  // filter/decision volume) - confirmed live via the exact same
+  // whole-batch FK failure. Since filter_results/agent_decisions are only
+  // ever synced as their last `window` rows (no other predicate), the fix
+  // is the same shape: detected_pools must also include any pool
+  // referenced by the last `window` rows of each.
   const positionsWindow = `status = 'open' OR id IN (SELECT id FROM positions ORDER BY id DESC LIMIT ?)`;
   await syncQuery(client, 'strategy_config_versions', `SELECT * FROM strategy_config_versions WHERE applied = 1 OR id IN (SELECT id FROM strategy_config_versions ORDER BY id DESC LIMIT ?)`, [window]);
   await syncQuery(
     client,
     'detected_pools',
-    `SELECT * FROM detected_pools WHERE status IN ('pending','filtering','watching') OR id IN (SELECT detected_pool_id FROM positions WHERE ${positionsWindow}) OR id IN (SELECT id FROM detected_pools ORDER BY detected_at DESC LIMIT ?)`,
-    [window, window],
+    `SELECT * FROM detected_pools WHERE status IN ('pending','filtering','watching') OR id IN (SELECT detected_pool_id FROM positions WHERE ${positionsWindow}) OR id IN (SELECT detected_pool_id FROM filter_results ORDER BY id DESC LIMIT ?) OR id IN (SELECT detected_pool_id FROM agent_decisions ORDER BY id DESC LIMIT ?) OR id IN (SELECT id FROM detected_pools ORDER BY detected_at DESC LIMIT ?)`,
+    [window, window, window, window],
   );
   await syncQuery(client, 'filter_results', `SELECT * FROM filter_results ORDER BY id DESC LIMIT ?`, [window]);
   await syncQuery(client, 'momentum_snapshots', `SELECT * FROM momentum_snapshots ORDER BY id DESC LIMIT ?`, [window]);
