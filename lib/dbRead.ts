@@ -94,6 +94,15 @@ export async function getLatestAgentDecisionForPool(detectedPoolId: number): Pro
   return rows[0] ? localDb.rowToAgentDecision(rows[0]) : null;
 }
 
+export async function getLatestAgentDecisionBeforeBuy(detectedPoolId: number, boughtAt: number): Promise<AgentDecision | null> {
+  if (!isReadOnlyDeployment()) return localDb.getLatestAgentDecisionBeforeBuy(detectedPoolId, boughtAt);
+  const rows = await tursoRows(
+    `SELECT * FROM agent_decisions WHERE detected_pool_id = ? AND checked_at <= ? ORDER BY checked_at DESC LIMIT 1`,
+    [detectedPoolId, boughtAt],
+  );
+  return rows[0] ? localDb.rowToAgentDecision(rows[0]) : null;
+}
+
 export async function getRecentAgentDecisionsDetailed(limit = 100): Promise<AgentDecisionDetailed[]> {
   if (!isReadOnlyDeployment()) return localDb.getRecentAgentDecisionsDetailed(limit);
   const rows = await tursoRows(

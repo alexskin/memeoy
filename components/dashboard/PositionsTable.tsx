@@ -18,6 +18,10 @@ export interface LivePositionInfo {
 
 export interface PositionRow extends Position {
   partialExits: PartialExit[];
+  /** The AI's stated reason for buying, from the decision that graduated this
+   * pool - joined in by app/api/positions/route.ts, not a Position column. */
+  entryReasoning: string | null;
+  entrySource: 'llm' | 'fallback' | null;
 }
 
 const PEAK_UNSET = -1000; // mirrors lib/types.ts PEAK_PROFIT_UNSET
@@ -51,6 +55,7 @@ export function PositionsTable({ positions, live }: { positions: PositionRow[]; 
       <thead>
         <tr>
           <th>Opened</th>
+          <th>Entry reason</th>
           <th>Venue</th>
           <th>Token</th>
           <th>Base mint</th>
@@ -73,6 +78,15 @@ export function PositionsTable({ positions, live }: { positions: PositionRow[]; 
           return (
             <tr key={p.id}>
               <td>{new Date(p.openedAt).toLocaleTimeString()}</td>
+              <td className="reason-cell">
+                {p.entryReasoning ? (
+                  <div className="reason-text">
+                    {p.entryReasoning} {p.entrySource && <span className="reason-source">({p.entrySource})</span>}
+                  </div>
+                ) : (
+                  '—'
+                )}
+              </td>
               <td><span className="badge neutral">{p.source}</span></td>
               <td>{p.tokenName ?? '—'}</td>
               <td><CopyableCA address={p.baseMint} /></td>
