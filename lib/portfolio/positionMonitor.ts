@@ -69,15 +69,16 @@ export class PositionMonitor {
   // the first time it's checked, so a fresh position gets its first review
   // aiExitReviewIntervalMs after opening, not immediately.
   private lastAiExitReviewAt = new Map<number, number>();
-  // Effective timeout deadline per position, once it's been pushed out by a
-  // granted extension - absent means "use openedAt + priceCheckDurationMs
-  // unmodified". timeoutExtensionUsed caps this at exactly one grant per
-  // position, ever, regardless of how many more times nearingTimeout is
-  // true afterward (it won't be, once the deadline itself has moved, but
-  // the flag is the actual source of truth in case of an edge case where
-  // it's checked again right at the new deadline).
+  // Effective timeout deadline per position, once pushed out by one or more
+  // granted extensions - absent means "use openedAt + priceCheckDurationMs
+  // unmodified". Uncapped in count by design (see exitDecisionEngine.ts) -
+  // each extension still requires a fresh real LLM judgment, and the AI is
+  // told how many times it's already extended so it can hold itself to a
+  // higher bar the more this has already happened.
   private timeoutDeadlineOverride = new Map<number, number>();
-  private timeoutExtensionUsed = new Set<number>();
+  private timeoutExtendCount = new Map<number, number>();
+  private rodePastStopLossCount = new Map<number, number>();
+  private rodePastTakeProfitCount = new Map<number, number>();
   // Confirmed bug: setInterval doesn't wait for the previous tick() to
   // finish. Under RPC rate-limiting a tick can take far longer than
   // priceCheckIntervalMs, so several ticks were running concurrently, each
@@ -110,7 +111,9 @@ export class PositionMonitor {
     this.tracked.delete(positionId);
     this.lastAiExitReviewAt.delete(positionId);
     this.timeoutDeadlineOverride.delete(positionId);
-    this.timeoutExtensionUsed.delete(positionId);
+    this.timeoutExtendCount.delete(positionId);
+    this.rodePastStopLossCount.delete(positionId);
+    this.rodePastTakeProfitCount.delete(positionId);
   }
 
   trackedCount(): number {
@@ -206,6 +209,16 @@ export class PositionMonitor {
     }
   }
 
+  private broadcastPositionUpdate(position: TrackedPosition, markPrice: number, currentValueQuote: number, profitPct: number) {
+    this.broadcast('position.updated', {
+      positionId: position.positionId,
+      markPrice,
+      unrealizedPnlQuote: currentValueQuote - position.quoteSizeInUi,
+      unrealizedPnlPct: profitPct,
+      peakProfitPct: position.peakProfitPct === PEAK_PROFIT_UNSET ? profitPct : position.peakProfitPct,
+    });
+  }
+
   // Returns this position's current unrealized value in quote units (0 if it closed this tick).
   private async evaluatePosition(
     position: TrackedPosition,
@@ -225,92 +238,11 @@ export class PositionMonitor {
       updatePositionPeak(position.positionId, profitPct);
     }
 
-    const hitStopLoss = profitPct <= -position.riskParams.stopLossPct;
-
-    // The hard deadline starts at openedAt + priceCheckDurationMs, but can
-    // be pushed out ONCE by a real (non-fallback) AI 'hold' judgment made
-    // on the review closest to that deadline - see the AI review block
-    // below. Absent from the override map means "never extended".
-    const baseDeadline = position.openedAt + config.priceCheckDurationMs;
-    const effectiveDeadline = this.timeoutDeadlineOverride.get(position.positionId) ?? baseDeadline;
-    const timedOut = config.priceCheckDurationMs > 0 && now >= effectiveDeadline;
-
-    // Stop-loss/timeout are safety-first and always fully close whatever
-    // remains, skipping the scaled-target logic below entirely.
-    if (hitStopLoss || timedOut) {
-      const status = hitStopLoss ? 'closed_sl' : 'closed_timeout';
-      const didClose = await this.closeNow(position, config, versionId, now, status, {
-        markPrice: markQuote.executionPrice,
-        currentValueQuote,
-        profitPct,
-      });
-      return didClose ? 0 : currentValueQuote;
-    }
-
-    if (config.aiExitReviewEnabled) {
-      const lastReview = this.lastAiExitReviewAt.get(position.positionId) ?? position.openedAt;
-      if (now - lastReview >= config.aiExitReviewIntervalMs) {
-        this.lastAiExitReviewAt.set(position.positionId, now);
-
-        const extensionUsed = this.timeoutExtensionUsed.has(position.positionId);
-        const nearingTimeout =
-          config.priceCheckDurationMs > 0 && !extensionUsed && effectiveDeadline - now <= config.aiExitReviewIntervalMs;
-
-        const decision = await decideExit({
-          baseMint: position.baseMint,
-          unrealizedPnlPct: profitPct,
-          peakProfitPct: position.peakProfitPct === PEAK_PROFIT_UNSET ? profitPct : position.peakProfitPct,
-          minutesHeld: (now - position.openedAt) / 60_000,
-          stopLossPct: position.riskParams.stopLossPct,
-          takeProfitPct: position.riskParams.takeProfitPct,
-          recentPerformance: summarizeRecentPerformanceBySignal(),
-          recentBuys5m: momentum?.txns.m5?.buys ?? null,
-          recentBuys1h: momentum?.txns.h1?.buys ?? null,
-          volume24hUsd: momentum?.volume.h24 ?? null,
-          priceChange1hPct: momentum?.priceChange.h1 ?? null,
-          nearingTimeout,
-          timeoutExtensionAvailable: nearingTimeout,
-        });
-        logger.info(
-          { positionId: position.positionId, baseMint: position.baseMint, action: decision.action, source: decision.source, reasoning: decision.reasoning, nearingTimeout },
-          'AI exit review',
-        );
-
-        if (decision.action === 'exit') {
-          const didClose = await this.closeNow(
-            position,
-            config,
-            versionId,
-            now,
-            'closed_ai_exit',
-            { markPrice: markQuote.executionPrice, currentValueQuote, profitPct },
-            decision.reasoning,
-          );
-          return didClose ? 0 : currentValueQuote;
-        }
-
-        // A real LLM judgment (never a fallback - see decideExit's
-        // fallbackDecision comment) choosing to hold while nearingTimeout
-        // is the one-time permission to push the deadline out. Applies
-        // immediately so later ticks this same session see the new
-        // deadline before it would otherwise have fired.
-        if (nearingTimeout && decision.source === 'llm') {
-          this.timeoutDeadlineOverride.set(position.positionId, baseDeadline + config.aiTimeoutExtensionMs);
-          this.timeoutExtensionUsed.add(position.positionId);
-          logger.info(
-            { positionId: position.positionId, baseMint: position.baseMint, extensionMs: config.aiTimeoutExtensionMs },
-            'AI granted a one-time timeout extension',
-          );
-        }
-      }
-    }
-
-    // Multi-target scaled take-profit: sell a fraction of the ORIGINAL size
-    // at each not-yet-fired ascending target crossed this tick, before the
-    // exitStrategy logic below runs on whatever fraction remains. Relies on
-    // profitPct being a price ratio, not size-dependent - decrementing
-    // baseAmountHeldUi/quoteSizeInUi proportionally leaves it unchanged, so
-    // the trailing/stop-loss math needs no further changes.
+    // Multi-target scaled take-profit still fires mechanically and
+    // unconditionally regardless of the AI layer below - these are
+    // moderate partial profit-locks on ascending thresholds (e.g. 20%/50%),
+    // not the final exit call, so they keep locking in some gain even on a
+    // position the AI later chooses to ride hard on the remaining size.
     const targets = [...position.riskParams.takeProfitTargets].sort((a, b) => a.pct - b.pct);
     for (const target of targets) {
       if (position.targetsFired.has(target.pct)) continue;
@@ -324,6 +256,15 @@ export class PositionMonitor {
       if (!this.tracked.has(position.positionId)) return 0; // fully liquidated by this target
     }
 
+    const hitStopLoss = profitPct <= -position.riskParams.stopLossPct;
+
+    // The deadline starts at openedAt + priceCheckDurationMs and can be
+    // pushed out repeatedly by real AI judgments below - absent from the
+    // override map means "never extended yet".
+    const baseDeadline = position.openedAt + config.priceCheckDurationMs;
+    const effectiveDeadline = this.timeoutDeadlineOverride.get(position.positionId) ?? baseDeadline;
+    const hitTimeout = config.priceCheckDurationMs > 0 && now >= effectiveDeadline;
+
     let hitTakeProfit: boolean;
     if (position.riskParams.exitStrategy === 'trailing') {
       // Don't sell the instant the target is hit - keep tracking the peak
@@ -335,24 +276,107 @@ export class PositionMonitor {
       hitTakeProfit = profitPct >= position.riskParams.takeProfitPct;
     }
 
-    if (!hitTakeProfit) {
-      this.broadcast('position.updated', {
-        positionId: position.positionId,
-        markPrice: markQuote.executionPrice,
-        unrealizedPnlQuote: currentValueQuote - position.quoteSizeInUi,
-        unrealizedPnlPct: profitPct,
-        peakProfitPct: position.peakProfitPct === PEAK_PROFIT_UNSET ? profitPct : position.peakProfitPct,
-      });
+    // AI exit review OFF entirely: fall back to the fully mechanical
+    // behavior this file had before any of this existed - unconditional
+    // stop-loss/timeout/take-profit, no LLM involved at all.
+    if (!config.aiExitReviewEnabled) {
+      if (hitStopLoss || hitTimeout) {
+        const status = hitStopLoss ? 'closed_sl' : 'closed_timeout';
+        const didClose = await this.closeNow(position, config, versionId, now, status, { markPrice: markQuote.executionPrice, currentValueQuote, profitPct });
+        return didClose ? 0 : currentValueQuote;
+      }
+      if (hitTakeProfit) {
+        const didClose = await this.closeNow(position, config, versionId, now, 'closed_tp', { markPrice: markQuote.executionPrice, currentValueQuote, profitPct });
+        return didClose ? 0 : currentValueQuote;
+      }
+      this.broadcastPositionUpdate(position, markQuote.executionPrice, currentValueQuote, profitPct);
       return currentValueQuote;
     }
 
-    const didClose = await this.closeNow(position, config, versionId, now, 'closed_tp', {
-      markPrice: markQuote.executionPrice,
-      currentValueQuote,
-      profitPct,
-    });
+    // AI-driven path. Any trigger becoming active forces an immediate
+    // review instead of waiting up to aiExitReviewIntervalMs to ask about a
+    // fresh stop-loss/take-profit/timeout hit; otherwise reviews stay on
+    // the normal cadence (token-conscious - not every 1s price tick).
+    const anyTriggerActive = hitStopLoss || hitTakeProfit || hitTimeout;
+    const lastReview = this.lastAiExitReviewAt.get(position.positionId) ?? position.openedAt;
+    const reviewDue = anyTriggerActive || now - lastReview >= config.aiExitReviewIntervalMs;
 
-    return didClose ? 0 : currentValueQuote;
+    if (!reviewDue) {
+      this.broadcastPositionUpdate(position, markQuote.executionPrice, currentValueQuote, profitPct);
+      return currentValueQuote;
+    }
+    this.lastAiExitReviewAt.set(position.positionId, now);
+
+    const slRideCount = this.rodePastStopLossCount.get(position.positionId) ?? 0;
+    const tpRideCount = this.rodePastTakeProfitCount.get(position.positionId) ?? 0;
+    const extendCount = this.timeoutExtendCount.get(position.positionId) ?? 0;
+
+    const decision = await decideExit({
+      baseMint: position.baseMint,
+      unrealizedPnlPct: profitPct,
+      peakProfitPct: position.peakProfitPct === PEAK_PROFIT_UNSET ? profitPct : position.peakProfitPct,
+      minutesHeld: (now - position.openedAt) / 60_000,
+      stopLossPct: position.riskParams.stopLossPct,
+      takeProfitPct: position.riskParams.takeProfitPct,
+      recentPerformance: summarizeRecentPerformanceBySignal(),
+      recentBuys5m: momentum?.txns.m5?.buys ?? null,
+      recentBuys1h: momentum?.txns.h1?.buys ?? null,
+      volume24hUsd: momentum?.volume.h24 ?? null,
+      priceChange1hPct: momentum?.priceChange.h1 ?? null,
+      stopLossReached: hitStopLoss,
+      timesRodePastStopLoss: slRideCount,
+      takeProfitReached: hitTakeProfit,
+      timesRodePastTakeProfit: tpRideCount,
+      timeoutReached: hitTimeout,
+      timesAlreadyExtended: extendCount,
+    });
+    logger.info(
+      { positionId: position.positionId, baseMint: position.baseMint, action: decision.action, source: decision.source, reasoning: decision.reasoning, hitStopLoss, hitTakeProfit, hitTimeout },
+      'AI exit review',
+    );
+
+    const isRealJudgment = decision.source === 'llm';
+
+    // Close if the AI actually chose to exit, OR a trigger is active but no
+    // real judgment was available (fallback) - an unavailable/failed LLM
+    // call must never itself grant a ride-past on a live trigger, so this
+    // reverts to the mechanical behavior for whichever fired, most severe
+    // first. A voluntary exit with no trigger active (plain early-exit
+    // check) falls through to closed_ai_exit.
+    if (decision.action === 'exit' || (anyTriggerActive && !isRealJudgment)) {
+      const status: Exclude<PositionStatus, 'open'> = hitStopLoss ? 'closed_sl' : hitTimeout ? 'closed_timeout' : hitTakeProfit ? 'closed_tp' : 'closed_ai_exit';
+      const didClose = await this.closeNow(
+        position,
+        config,
+        versionId,
+        now,
+        status,
+        { markPrice: markQuote.executionPrice, currentValueQuote, profitPct },
+        isRealJudgment ? decision.reasoning : undefined,
+      );
+      return didClose ? 0 : currentValueQuote;
+    }
+
+    // Real LLM 'hold' - apply whichever overrides are relevant. Uncapped in
+    // count; each one still required a fresh judgment this same tick.
+    if (isRealJudgment) {
+      if (hitStopLoss) {
+        this.rodePastStopLossCount.set(position.positionId, slRideCount + 1);
+        logger.info({ positionId: position.positionId, baseMint: position.baseMint, count: slRideCount + 1 }, 'AI rode past stop-loss');
+      }
+      if (hitTakeProfit) {
+        this.rodePastTakeProfitCount.set(position.positionId, tpRideCount + 1);
+        logger.info({ positionId: position.positionId, baseMint: position.baseMint, count: tpRideCount + 1 }, 'AI rode past take-profit');
+      }
+      if (hitTimeout) {
+        this.timeoutDeadlineOverride.set(position.positionId, effectiveDeadline + config.aiTimeoutExtensionMs);
+        this.timeoutExtendCount.set(position.positionId, extendCount + 1);
+        logger.info({ positionId: position.positionId, baseMint: position.baseMint, count: extendCount + 1, extensionMs: config.aiTimeoutExtensionMs }, 'AI granted a timeout extension');
+      }
+    }
+
+    this.broadcastPositionUpdate(position, markQuote.executionPrice, currentValueQuote, profitPct);
+    return currentValueQuote;
   }
 
   // Fires one scaled take-profit leg. Returns true if it actually sold

@@ -1,20 +1,15 @@
-// Periodic AI judgment on an already-open position: "keep holding, or exit
-// now even though SL/TP haven't fired?" Mirrors decisionEngine.ts's shape
-// and fail-safe philosophy (no ANTHROPIC_API_KEY / API error / unparseable
-// response -> 'hold', never blocks position management on an LLM hiccup).
-//
-// Deliberately does NOT see or influence stopLossPct - that stays a hard,
-// unconditional floor enforced by lib/portfolio/positionMonitor.ts
-// regardless of what this returns. This only ever gets a chance to trigger
-// a VOLUNTARY early exit; it can't override or delay a stop-loss.
-//
-// Also carries live momentum data (recent buys/volume/price change) so the
-// judgment isn't blind to whether the token is actually still active right
-// now, not just where its price sits - and near-timeout context, since
-// positionMonitor.ts treats a 'hold' returned with source:'llm' while
-// nearingTimeout as a one-time, capped permission to extend the hard
-// timeout floor (see positionMonitor.ts for why this only applies to a
-// real LLM judgment, never a fallback).
+// Periodic AI judgment on an already-open position. Unlike the entry-side
+// decisionEngine.ts (fires once), this is asked repeatedly and now has real
+// authority over ALL THREE exit triggers - stop-loss, take-profit, and the
+// max-hold timeout - as many times as it judges warranted for each. This is
+// a paper-trading bot (no real funds), and the explicit design choice here:
+// nothing is a hard, AI-unreachable floor anymore. The safety net is
+// structural instead - see lib/portfolio/positionMonitor.ts's fallback
+// handling: a 'hold' returned via the fallback path (no ANTHROPIC_API_KEY,
+// API error, unparseable response) is NEVER treated as permission to ride
+// past a triggered exit - positionMonitor.ts reverts to closing on whatever
+// mechanical trigger is active whenever a real LLM judgment isn't available,
+// so an outage or bug can never leave a position silently unprotected.
 import { ANTHROPIC_API_KEY } from '../config/env';
 import { logger } from '../logger';
 
@@ -33,11 +28,20 @@ export interface ExitDecisionInput {
   recentBuys1h: number | null;
   volume24hUsd: number | null;
   priceChange1hPct: number | null;
-  /** True when the position is close enough to its hard timeout that a
-   * 'hold' decision here (only when source ends up 'llm') grants a
-   * one-time extension instead of just declining an early voluntary exit. */
-  nearingTimeout: boolean;
-  timeoutExtensionAvailable: boolean;
+  /** The position has hit its configured stop-loss. "hold" (only when
+   * source ends up 'llm') means riding past it - the highest-risk override,
+   * only warranted with strong, specific evidence the drop is noise, not
+   * the start of a real breakdown. */
+  stopLossReached: boolean;
+  timesRodePastStopLoss: number;
+  /** The position just hit its take-profit/trailing exit. "hold" means
+   * riding past it instead of selling now. */
+  takeProfitReached: boolean;
+  timesRodePastTakeProfit: number;
+  /** The position hit its max-hold deadline. "hold" grants another
+   * extension. */
+  timeoutReached: boolean;
+  timesAlreadyExtended: number;
 }
 
 export interface ExitDecision {
@@ -47,25 +51,21 @@ export interface ExitDecision {
 }
 
 function fallbackDecision(reasoning: string): ExitDecision {
-  // Deterministic default is always 'hold' - the mechanical SL/TP/trailing/
-  // timeout checks in positionMonitor.ts run every tick regardless of this
-  // module, so falling back to "do nothing extra" is the safe choice, not
-  // a gap in coverage. Because source is 'fallback' here, positionMonitor.ts
-  // will NOT treat this as timeout-extension permission, even if
-  // nearingTimeout was true - an unavailable/failed LLM call must never
-  // itself extend the safety-net timeout.
   return { action: 'hold', reasoning, source: 'fallback' };
 }
 
-const SYSTEM_PROMPT = `You are reviewing an OPEN position in a Solana memecoin PAPER-TRADING bot (simulated fills, no real funds). This is a periodic check-in, not the buy decision - the token already passed the buy gate. Stop-loss is enforced separately and unconditionally; you are never asked to prevent a loss, only to judge whether to voluntarily exit NOW to lock in or protect gains, or keep holding for more upside.
+const SYSTEM_PROMPT = `You are reviewing an OPEN position in a Solana memecoin PAPER-TRADING bot (simulated fills, no real funds). This is a periodic check-in, not the buy decision - the token already passed the buy gate.
 
-You'll get the current unrealized P&L%, the peak P&L% reached so far (a big pullback from peak is a stronger signal than the raw P&L number alone), how long it's been held, the configured stop-loss/take-profit levels for context, live momentum (recent buy counts, 24h volume, 1h price change - null means unavailable, not zero), and a summary of how similar situations performed recently.
+You have real authority here: you can end the position early, and you can override all three of its mechanical exit triggers - stop-loss, take-profit, and max-hold time - repeatedly, for as long as you keep seeing genuine evidence that overriding is the right call. A memecoin that's up 800% and still getting real buy volume should not be force-sold just because it crossed a static target price set before anyone knew how big the move would be. Equally, a token that's down sharply on real, active dumping should not be held "just in case" - that's exactly what stop-loss exists to prevent.
 
-Weigh momentum alongside P&L: a position sitting flat with fading buys/volume is a weaker hold than one flat but still seeing active buying - dead volume is itself a reason to consider exiting even without a price move yet.
+You'll get: current unrealized P&L% and peak P&L% since entry (a big pullback from peak matters more than the raw number), how long it's been held, live momentum (recent buy counts, 24h volume, 1h price change - null means unavailable, not zero), and a summary of how similar situations performed recently.
 
-Default to holding unless you see a clear reason to exit early (e.g. a strong pullback from peak, or fading/dead momentum with no real gain to show for it). Don't exit just because P&L is modestly positive - let winners run toward the configured take-profit unless something looks wrong.
+Up to three specific situations may be flagged, each with how many times you've already overridden it for this same position - the more times, the stronger the evidence needs to be to do it again. Don't rubber-stamp every review:
+- stopLossReached: the position hit its stop-loss. "hold" = ride past it. This is the highest-risk override - only do it with a specific, concrete reason the drop is noise (e.g. a brief liquidity wobble with buying still active), never just "might recover."
+- takeProfitReached: the position hit its take-profit/trailing exit. "hold" = ride past it. Needs real evidence of continued momentum (active buying, volume, no reversal signal), not just "no reason not to."
+- timeoutReached: the position hit its max hold time. "hold" = grant another extension.
 
-If you're told this position is nearing its maximum hold time and an extension is available: a 'hold' here specifically grants it more time past that limit, so only choose 'hold' if momentum genuinely still looks alive (real recent buys/volume, not just "no clear reason to exit"). If it's gone quiet, 'exit' and let the timeout do its job.
+Outside those situations, this is a plain early-exit check: default to holding unless you see a clear reason to exit now.
 
 Reply with EXACTLY this JSON shape, nothing else, no markdown fences: {"action": "hold" | "exit", "reasoning": "<one sentence, under 40 words>"}`;
 
@@ -75,20 +75,26 @@ export async function decideExit(input: ExitDecisionInput): Promise<ExitDecision
   }
 
   const momentumLine = `Recent buys: ${input.recentBuys5m ?? 'n/a'} (5m), ${input.recentBuys1h ?? 'n/a'} (1h). 24h volume: ${input.volume24hUsd != null ? '$' + Math.round(input.volume24hUsd).toLocaleString() : 'n/a'}. 1h price change: ${input.priceChange1hPct != null ? input.priceChange1hPct.toFixed(1) + '%' : 'n/a'}.`;
-  const timeoutLine = input.nearingTimeout
-    ? input.timeoutExtensionAvailable
-      ? `This position is nearing its maximum hold time. Choosing "hold" now grants a one-time extension - only do so if momentum genuinely still looks alive.`
-      : `This position is nearing its maximum hold time and has already used its one-time extension - the timeout will apply regardless of this review.`
-    : '';
+
+  const situationLines: string[] = [];
+  if (input.stopLossReached) {
+    situationLines.push(`STOP-LOSS REACHED. "hold" = ride past it. Already ridden past ${input.timesRodePastStopLoss} time(s) before this.`);
+  }
+  if (input.takeProfitReached) {
+    situationLines.push(`TAKE-PROFIT REACHED. "hold" = ride past it. Already ridden past ${input.timesRodePastTakeProfit} time(s) before this.`);
+  }
+  if (input.timeoutReached) {
+    situationLines.push(`MAX HOLD TIME REACHED. "hold" = grant another extension. Already extended ${input.timesAlreadyExtended} time(s) before this.`);
+  }
 
   const userPrompt = `Mint: ${input.baseMint}
 Unrealized P&L: ${input.unrealizedPnlPct.toFixed(1)}%
 Peak P&L since entry: ${input.peakProfitPct.toFixed(1)}%
 Held for: ${input.minutesHeld.toFixed(1)} minutes
-Configured stop-loss: -${input.stopLossPct}% (enforced separately, not your call)
+Configured stop-loss: -${input.stopLossPct}%
 Configured take-profit: ${input.takeProfitPct}%
 ${momentumLine}
-${timeoutLine}
+${situationLines.join('\n')}
 ${input.recentPerformance}`;
 
   const controller = new AbortController();
