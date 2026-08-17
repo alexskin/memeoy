@@ -125,16 +125,18 @@ export function WatcherTable({ rows }: { rows: WatcherRow[] }) {
                   </span>
                 )}
               </td>
-              <td>
+              <td className="reason-cell">
                 {!d ? (
                   <span className="badge neutral">pending</span>
                 ) : (
-                  <span
-                    className={`badge ${d.action === 'buy' ? 'ok' : 'pending'}`}
-                    title={`${d.reasoning} (${d.source})`}
-                  >
-                    {d.action.toUpperCase()} {(d.confidence * 100).toFixed(0)}%
-                  </span>
+                  <>
+                    <span className={`badge ${d.action === 'buy' ? 'ok' : 'pending'}`}>
+                      {d.action.toUpperCase()} {(d.confidence * 100).toFixed(0)}%
+                    </span>
+                    <div className="reason-text">
+                      {d.reasoning} <span className="reason-source">({d.source})</span>
+                    </div>
+                  </>
                 )}
               </td>
               <td>

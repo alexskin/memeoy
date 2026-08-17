@@ -199,6 +199,24 @@ tr:hover td {
   background: var(--panel-hover);
 }
 
+.reason-cell {
+  max-width: 280px;
+  white-space: normal;
+}
+
+.reason-text {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.reason-source {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 .pos {
   color: var(--long);
 }

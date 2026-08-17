@@ -80,14 +80,9 @@ export function TradeHistoryTable({ trades }: { trades: TradeRow[] }) {
                   '—'
                 )}
               </td>
-              <td>
-                {t.aiExitReasoning ? (
-                  <span className="badge neutral" title={t.aiExitReasoning}>
-                    {STATUS_LABEL[t.status] ?? t.status}
-                  </span>
-                ) : (
-                  STATUS_LABEL[t.status] ?? t.status
-                )}
+              <td className="reason-cell">
+                <span className="badge neutral">{STATUS_LABEL[t.status] ?? t.status}</span>
+                {t.aiExitReasoning && <div className="reason-text">{t.aiExitReasoning}</div>}
               </td>
               <td className={pnlPct >= 0 ? 'pos' : 'neg'}>
                 {pnlPct >= 0 ? '+' : ''}
