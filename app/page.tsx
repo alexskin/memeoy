@@ -1,8 +1,9 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
 import { useWorkerSocket, WorkerMessage } from '../lib/ws/client';
-import { AgentSuggestion, DetectedPool, EquitySnapshot, FilterOutcome, MomentumCriterionResult, StrategyConfig, StrategyConfigVersion, WalletAlert } from '../lib/types';
+import { AgentDecisionDetailed, AgentSuggestion, DetectedPool, EquitySnapshot, FilterOutcome, MomentumCriterionResult, StrategyConfig, StrategyConfigVersion, WalletAlert } from '../lib/types';
 import { WatcherTable, WatcherRow } from '../components/dashboard/WatcherTable';
+import { DecisionLog } from '../components/dashboard/DecisionLog';
 import { StatsStrip } from '../components/dashboard/StatsStrip';
 import { PositionsTable, LivePositionInfo, PositionRow } from '../components/dashboard/PositionsTable';
 import { TradeHistoryTable, TradeRow } from '../components/dashboard/TradeHistoryTable';
@@ -30,6 +31,7 @@ export default function Page() {
   const [tab, setTab] = useState<Tab>('Watcher');
 
   const [pools, setPools] = useState<WatcherRow[]>([]);
+  const [decisions, setDecisions] = useState<AgentDecisionDetailed[]>([]);
   const [walletAlerts, setWalletAlerts] = useState<WalletAlert[]>([]);
   const [positions, setPositions] = useState<PositionRow[]>([]);
   const [livePositions, setLivePositions] = useState<Record<number, LivePositionInfo>>({});
@@ -43,9 +45,10 @@ export default function Page() {
   const [controlState, setControlState] = useState<WorkerControlState>('running');
 
   const refreshAll = useCallback(async () => {
-    const [poolsRes, positionsRes, tradesRes, equityRes, configRes, historyRes, suggestionsRes, healthRes, controlRes, walletAlertsRes] =
+    const [poolsRes, decisionsRes, positionsRes, tradesRes, equityRes, configRes, historyRes, suggestionsRes, healthRes, controlRes, walletAlertsRes] =
       await Promise.all([
         fetch('/api/pools').then((r) => r.json()),
+        fetch('/api/decisions?limit=50').then((r) => r.json()),
         fetch('/api/positions').then((r) => r.json()),
         fetch('/api/trades').then((r) => r.json()),
         fetch('/api/equity').then((r) => r.json()),
@@ -57,6 +60,7 @@ export default function Page() {
         fetch('/api/wallet-alerts').then((r) => r.json()),
       ]);
     setPools(poolsRes.pools);
+    setDecisions(decisionsRes.decisions);
     setPositions(positionsRes.positions);
     setTrades(tradesRes.trades);
     setSnapshots(equityRes.snapshots);
@@ -115,6 +119,8 @@ export default function Page() {
         case 'agent.decision': {
           const payload = msg.payload as {
             detectedPoolId: number;
+            baseMint: string;
+            venue: string;
             checkedAt: number;
             momentumPass: boolean;
             revivalPass: boolean;
@@ -149,6 +155,30 @@ export default function Page() {
                   }
                 : row,
             ),
+          );
+          // Synthetic negative id - reconciled with the real DB id on the
+          // next 30s refreshAll() poll, same as the pools patch above.
+          setDecisions((prev) =>
+            [
+              {
+                id: -Date.now(),
+                configVersionId: -1,
+                detectedPoolId: payload.detectedPoolId,
+                baseMint: payload.baseMint,
+                venue: payload.venue,
+                checkedAt: payload.checkedAt,
+                momentumPass: payload.momentumPass,
+                revivalPass: payload.revivalPass,
+                revivalStrength: payload.revivalStrength,
+                degenScore: payload.degenScore,
+                degenVerdict: payload.degenVerdict,
+                action: payload.action,
+                confidence: payload.confidence,
+                reasoning: payload.reasoning,
+                source: payload.source,
+              },
+              ...prev,
+            ].slice(0, 50),
           );
           break;
         }
@@ -263,6 +293,10 @@ export default function Page() {
             <h2>AI watcher — detection → decision → outcome</h2>
             <WatcherTable rows={pools} />
           </div>
+          <div className="panel">
+            <h2>Recent AI decisions</h2>
+            <DecisionLog decisions={decisions} />
+          </div>
         </>
       )}
 
@@ -279,6 +313,10 @@ export default function Page() {
           <div className="panel">
             <h2>Closed trades</h2>
             <TradeHistoryTable trades={trades} />
+          </div>
+          <div className="panel">
+            <h2>Recent AI decisions</h2>
+            <DecisionLog decisions={decisions} />
           </div>
         </>
       )}

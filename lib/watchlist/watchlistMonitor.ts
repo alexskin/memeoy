@@ -176,6 +176,8 @@ export class WatchlistMonitor {
             });
             this.broadcast('agent.decision', {
               detectedPoolId: c.id,
+              baseMint: c.baseMint,
+              venue: c.source,
               checkedAt: now,
               momentumPass: evaluation.pass,
               revivalPass: revival.pass,

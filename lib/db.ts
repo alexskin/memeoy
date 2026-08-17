@@ -10,6 +10,7 @@ import { migrate } from '../scripts/migrate';
 import { DEFAULT_STRATEGY_CONFIG, hydrateConfig } from './config/defaultConfig';
 import {
   AgentDecision,
+  AgentDecisionDetailed,
   AgentSuggestion,
   AgentSuggestionStatus,
   DetectedPool,
@@ -416,6 +417,21 @@ export function rowToAgentDecision(row: any): AgentDecision {
 
 export function getRecentAgentDecisions(limit = 100): AgentDecision[] {
   return getDb().prepare(`SELECT * FROM agent_decisions ORDER BY id DESC LIMIT ?`).all(limit).map(rowToAgentDecision);
+}
+
+// Same rows as getRecentAgentDecisions, joined with the parent pool's
+// base_mint/source - agent_decisions itself doesn't carry those, and the
+// standalone decision-log panel (unlike WatcherTable, which already has the
+// pool loaded) needs to say which token was judged.
+export function getRecentAgentDecisionsDetailed(limit = 100): AgentDecisionDetailed[] {
+  return getDb()
+    .prepare(
+      `SELECT ad.*, dp.base_mint AS base_mint, dp.source AS venue
+       FROM agent_decisions ad JOIN detected_pools dp ON dp.id = ad.detected_pool_id
+       ORDER BY ad.id DESC LIMIT ?`,
+    )
+    .all(limit)
+    .map((row: any) => ({ ...rowToAgentDecision(row), baseMint: row.base_mint, venue: row.venue }));
 }
 
 // "What's the latest verdict on this pool right now" - unlike

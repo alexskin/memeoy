@@ -309,6 +309,16 @@ export interface AgentDecision {
   configVersionId: number;
 }
 
+// AgentDecision plus the parent pool's baseMint/venue - agent_decisions
+// itself has no such columns (a pure decision-judgment row), but a
+// standalone decision feed (independent of the 200-row-capped pools list -
+// see components/dashboard/DecisionLog.tsx) needs to say which token was
+// judged, so this is a read-side join, never persisted.
+export interface AgentDecisionDetailed extends AgentDecision {
+  baseMint: string;
+  venue: string;
+}
+
 export interface PremigrationCriterionResult {
   criterionName: 'maxAge' | 'minMarketCap' | 'maxDevHolding' | 'maxInsider' | 'maxTop10Holders';
   ok: boolean;

@@ -26,6 +26,7 @@ import { unstable_noStore as noStore } from 'next/cache';
 import * as localDb from './db';
 import {
   AgentDecision,
+  AgentDecisionDetailed,
   AgentSuggestion,
   DetectedPool,
   EquitySnapshot,
@@ -91,6 +92,17 @@ export async function getLatestAgentDecisionForPool(detectedPoolId: number): Pro
   if (!isReadOnlyDeployment()) return localDb.getLatestAgentDecisionForPool(detectedPoolId);
   const rows = await tursoRows(`SELECT * FROM agent_decisions WHERE detected_pool_id = ? ORDER BY checked_at DESC LIMIT 1`, [detectedPoolId]);
   return rows[0] ? localDb.rowToAgentDecision(rows[0]) : null;
+}
+
+export async function getRecentAgentDecisionsDetailed(limit = 100): Promise<AgentDecisionDetailed[]> {
+  if (!isReadOnlyDeployment()) return localDb.getRecentAgentDecisionsDetailed(limit);
+  const rows = await tursoRows(
+    `SELECT ad.*, dp.base_mint AS base_mint, dp.source AS venue
+     FROM agent_decisions ad JOIN detected_pools dp ON dp.id = ad.detected_pool_id
+     ORDER BY ad.id DESC LIMIT ?`,
+    [limit],
+  );
+  return rows.map((row: any) => ({ ...localDb.rowToAgentDecision(row), baseMint: row.base_mint, venue: row.venue }));
 }
 
 export async function getOpenPositions(): Promise<Position[]> {
