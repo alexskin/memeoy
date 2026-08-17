@@ -8,6 +8,7 @@ import { getMetadataAccountDataSerializer } from '@metaplex-foundation/mpl-token
 import { Filter, MintLike, NamedFilterResult } from './types';
 import { RenouncedFreezeFilter } from './renouncedFreezeFilter';
 import { MutableFilter } from './mutableFilter';
+import { StickyPassFilter } from './stickyPassFilter';
 import { StrategyConfig } from '../types';
 
 export class PumpFunFilters {
@@ -15,7 +16,9 @@ export class PumpFunFilters {
 
   constructor(connection: Connection, config: StrategyConfig) {
     if (config.checkRenounced || config.checkFreezable) {
-      this.mintFilters.push(new RenouncedFreezeFilter(connection, config.checkRenounced, config.checkFreezable));
+      // Sticky: mint/freeze authority set to None is a one-way on-chain
+      // fact - see stickyPassFilter.ts.
+      this.mintFilters.push(new StickyPassFilter(new RenouncedFreezeFilter(connection, config.checkRenounced, config.checkFreezable)));
     }
 
     if (config.checkMutable || config.checkSocials) {

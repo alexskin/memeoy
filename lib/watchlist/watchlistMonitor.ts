@@ -19,6 +19,18 @@ export type BuyCallback = (pool: DetectedPool) => Promise<void>;
 export type BroadcastFn = (event: string, payload: unknown) => void;
 export type ConfigAccessor = () => { config: StrategyConfig; versionId: number };
 
+// Bounds how many candidates can graduate (onGraduate -> rebuildPriceSourceForPool
+// + executeBuy, both RPC-heavy) within a single tick. Momentum/revival
+// evaluation itself is cheap (one batched DexScreener call for the whole
+// watchlist), but graduating is not - confirmed live: resuming from a PAUSE/
+// STOP lets the watchlist backlog build up, and the first tick after resume
+// can find a dozen+ candidates clearing their gate at once, firing that many
+// RPC-heavy graduations back-to-back and 429-ing a free-tier Helius plan.
+// Candidates beyond the cap are left untouched (still 'watching') rather
+// than recorded as a decision that never acts on - they're re-evaluated
+// with fresh data on the next tick instead of using a stale decision.
+const MAX_GRADUATIONS_PER_TICK = 3;
+
 export class WatchlistMonitor {
   private tickInFlight = false;
   private timer: NodeJS.Timeout | null = null;
@@ -89,6 +101,8 @@ export class WatchlistMonitor {
 
       const pairsByMint = await getTokensBatch('solana', stillLive.map((c) => c.baseMint));
 
+      let graduationsThisTick = 0;
+
       for (const c of stillLive) {
         try {
           const pair = pairsByMint.get(c.baseMint) ?? null;
@@ -137,6 +151,15 @@ export class WatchlistMonitor {
                   source: 'fallback' as const,
                 };
 
+            if (decision.action === 'buy' && graduationsThisTick >= MAX_GRADUATIONS_PER_TICK) {
+              // Per-tick graduation cap reached - leave this candidate
+              // exactly as it was (still 'watching', no decision recorded)
+              // so it's re-evaluated with fresh data next tick instead of
+              // firing another RPC-heavy graduation into an already-busy tick.
+              logger.debug({ detectedPoolId: c.id }, 'Deferring graduation to next tick - per-tick graduation cap reached');
+              continue;
+            }
+
             insertAgentDecision({
               detectedPoolId: c.id,
               checkedAt: now,
@@ -166,6 +189,7 @@ export class WatchlistMonitor {
             });
 
             if (decision.action === 'buy') {
+              graduationsThisTick++;
               updatePoolStatus(c.id, 'passed');
               this.broadcast('pool.status', { id: c.id, status: 'passed' });
               await this.onGraduate(c);

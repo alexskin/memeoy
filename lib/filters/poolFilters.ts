@@ -13,6 +13,7 @@ import { BurnFilter } from './burnFilter';
 import { RenouncedFreezeFilter } from './renouncedFreezeFilter';
 import { PoolSizeFilter } from './poolSizeFilter';
 import { MutableFilter } from './mutableFilter';
+import { StickyPassFilter } from './stickyPassFilter';
 import { StrategyConfig } from '../types';
 
 export type { NamedFilterResult };
@@ -22,11 +23,16 @@ export class PoolFilters {
 
   constructor(connection: Connection, quoteToken: Token, config: StrategyConfig) {
     if (config.checkBurned) {
-      this.filters.push(new BurnFilter(connection));
+      // Sticky: LP burn is a one-way on-chain fact - once burned it can
+      // never be un-burned, so a passing result never needs re-fetching for
+      // the rest of this pool's filter-match loop (see stickyPassFilter.ts).
+      this.filters.push(new StickyPassFilter(new BurnFilter(connection)));
     }
 
     if (config.checkRenounced || config.checkFreezable) {
-      this.filters.push(new RenouncedFreezeFilter(connection, config.checkRenounced, config.checkFreezable));
+      // Sticky for the same reason - mint/freeze authority set to None can
+      // never be reassigned.
+      this.filters.push(new StickyPassFilter(new RenouncedFreezeFilter(connection, config.checkRenounced, config.checkFreezable)));
     }
 
     if (config.checkMutable || config.checkSocials) {
