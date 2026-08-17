@@ -1,11 +1,11 @@
 import { NextResponse } from 'next/server';
-import { isHostedReadOnly } from '../../../../../lib/dbRead';
+import { isReadOnlyDeployment } from '../../../../../lib/dbRead';
 import { applyAgentSuggestion, rejectAgentSuggestion } from '../../../../../lib/agent/agentRunner';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request, { params }: { params: { id: string } }) {
-  if (isHostedReadOnly()) {
+  if (isReadOnlyDeployment()) {
     return NextResponse.json({ error: 'read-only' }, { status: 403 });
   }
 

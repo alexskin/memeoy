@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getWorkerControlState, isHostedReadOnly } from '../../../lib/dbRead';
+import { getWorkerControlState, isReadOnlyDeployment } from '../../../lib/dbRead';
 import { requestSellAll, setWorkerControlState, WorkerControlState } from '../../../lib/db';
 
 export const dynamic = 'force-dynamic';
@@ -12,7 +12,7 @@ const VALID_ACTIONS = ['pause', 'start', 'stop', 'sellAll'] as const;
 type Action = (typeof VALID_ACTIONS)[number];
 
 export async function POST(request: Request) {
-  if (isHostedReadOnly()) {
+  if (isReadOnlyDeployment()) {
     return NextResponse.json({ error: 'read-only' }, { status: 403 });
   }
 

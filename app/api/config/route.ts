@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getActiveConfigVersion, isHostedReadOnly } from '../../../lib/dbRead';
+import { getActiveConfigVersion, isReadOnlyDeployment } from '../../../lib/dbRead';
 import { insertConfigVersion } from '../../../lib/db';
 import { StrategyConfig } from '../../../lib/types';
 
@@ -11,10 +11,11 @@ export async function GET() {
 
 // Manual override: creates and applies a brand-new version (append-only
 // history - see plan section on strategy_config_versions). Disabled on the
-// public read-only deployment (Turso configured) - writes only ever happen
-// against the local worker's DB, never against the Turso mirror.
+// public read-only deployment (NEXT_PUBLIC_READ_ONLY=true, Vercel-only) -
+// writes only ever happen against the local worker's DB, never against the
+// Turso mirror.
 export async function POST(request: Request) {
-  if (isHostedReadOnly()) {
+  if (isReadOnlyDeployment()) {
     return NextResponse.json({ error: 'read-only' }, { status: 403 });
   }
   const body = (await request.json()) as { config: StrategyConfig; rationale?: string };

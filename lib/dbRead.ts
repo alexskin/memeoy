@@ -8,10 +8,15 @@
 // never runs on Vercel and shouldn't take on network-dependent I/O in its
 // hot path.
 //
-// When TURSO_DATABASE_URL is unset (local `npm run dev`, no setup needed),
-// every function below is a thin async wrapper around the matching lib/db.ts
-// export - local dev behaves exactly as it did before this file existed.
-// When set, queries go to Turso instead, using the SAME rowToX() mapping
+// Branches on isReadOnlyDeployment() (NEXT_PUBLIC_READ_ONLY), NOT on
+// whether TURSO_DATABASE_URL happens to be set - a local .env.local
+// deliberately sets TURSO_DATABASE_URL too (that's what turns on the local
+// worker's periodic sync job), so a local `next dev` reading that same file
+// would otherwise start reading its own local dashboard from the Turso
+// mirror instead of the full, authoritative, zero-lag local DB it has
+// sitting right there. Only the actual Vercel deployment sets
+// NEXT_PUBLIC_READ_ONLY, and that's the only place with no local DB to fall
+// back to. When Turso IS queried, it uses the SAME rowToX() mapping
 // functions lib/db.ts already exports (libSQL rows expose columns as named
 // properties the same way better-sqlite3 rows do, so the mapping logic is
 // correct unchanged against either source) - see lib/sync/tursoSync.ts for
@@ -35,8 +40,8 @@ import {
 const TURSO_DATABASE_URL = process.env.TURSO_DATABASE_URL || '';
 const TURSO_AUTH_TOKEN = process.env.TURSO_AUTH_TOKEN || '';
 
-export function isHostedReadOnly(): boolean {
-  return !!TURSO_DATABASE_URL;
+export function isReadOnlyDeployment(): boolean {
+  return process.env.NEXT_PUBLIC_READ_ONLY === 'true';
 }
 
 let _client: Client | null = null;
@@ -53,87 +58,87 @@ async function tursoRows(sql: string, args: unknown[] = []): Promise<any[]> {
 }
 
 export async function getRecentPools(limit = 100): Promise<DetectedPool[]> {
-  if (!isHostedReadOnly()) return localDb.getRecentPools(limit);
+  if (!isReadOnlyDeployment()) return localDb.getRecentPools(limit);
   const rows = await tursoRows(`SELECT * FROM detected_pools ORDER BY detected_at DESC LIMIT ?`, [limit]);
   return rows.map(localDb.rowToDetectedPool);
 }
 
 export async function getPoolFilterResults(detectedPoolId: number): Promise<FilterOutcome[]> {
-  if (!isHostedReadOnly()) return localDb.getPoolFilterResults(detectedPoolId);
+  if (!isReadOnlyDeployment()) return localDb.getPoolFilterResults(detectedPoolId);
   const rows = await tursoRows(`SELECT * FROM filter_results WHERE detected_pool_id = ? ORDER BY checked_at ASC`, [detectedPoolId]);
   return rows.map(localDb.rowToFilterOutcome);
 }
 
 export async function getLatestMomentumSnapshot(detectedPoolId: number): Promise<MomentumSnapshot | null> {
-  if (!isHostedReadOnly()) return localDb.getLatestMomentumSnapshot(detectedPoolId);
+  if (!isReadOnlyDeployment()) return localDb.getLatestMomentumSnapshot(detectedPoolId);
   const rows = await tursoRows(`SELECT * FROM momentum_snapshots WHERE detected_pool_id = ? ORDER BY checked_at DESC LIMIT 1`, [detectedPoolId]);
   return rows[0] ? localDb.rowToMomentumSnapshot(rows[0]) : null;
 }
 
 export async function getLatestAgentDecisionForPool(detectedPoolId: number): Promise<AgentDecision | null> {
-  if (!isHostedReadOnly()) return localDb.getLatestAgentDecisionForPool(detectedPoolId);
+  if (!isReadOnlyDeployment()) return localDb.getLatestAgentDecisionForPool(detectedPoolId);
   const rows = await tursoRows(`SELECT * FROM agent_decisions WHERE detected_pool_id = ? ORDER BY checked_at DESC LIMIT 1`, [detectedPoolId]);
   return rows[0] ? localDb.rowToAgentDecision(rows[0]) : null;
 }
 
 export async function getOpenPositions(): Promise<Position[]> {
-  if (!isHostedReadOnly()) return localDb.getOpenPositions();
+  if (!isReadOnlyDeployment()) return localDb.getOpenPositions();
   const rows = await tursoRows(`SELECT * FROM positions WHERE status = 'open' ORDER BY opened_at ASC`);
   return rows.map(localDb.rowToPosition);
 }
 
 export async function getClosedPositions(limit = 200): Promise<Position[]> {
-  if (!isHostedReadOnly()) return localDb.getClosedPositions(limit);
+  if (!isReadOnlyDeployment()) return localDb.getClosedPositions(limit);
   const rows = await tursoRows(`SELECT * FROM positions WHERE status != 'open' ORDER BY closed_at DESC LIMIT ?`, [limit]);
   return rows.map(localDb.rowToPosition);
 }
 
 export async function getPartialExitsForPosition(positionId: number): Promise<PartialExit[]> {
-  if (!isHostedReadOnly()) return localDb.getPartialExitsForPosition(positionId);
+  if (!isReadOnlyDeployment()) return localDb.getPartialExitsForPosition(positionId);
   const rows = await tursoRows(`SELECT * FROM partial_exits WHERE position_id = ? ORDER BY closed_at ASC`, [positionId]);
   return rows.map(localDb.rowToPartialExit);
 }
 
 export async function getFillById(id: number | null): Promise<SimulatedFill | null> {
   if (id === null) return null;
-  if (!isHostedReadOnly()) return localDb.getFillById(id);
+  if (!isReadOnlyDeployment()) return localDb.getFillById(id);
   const rows = await tursoRows(`SELECT * FROM fills WHERE id = ?`, [id]);
   return rows[0] ? localDb.rowToFill(rows[0]) : null;
 }
 
 export async function getEquitySnapshots(limit = 1000): Promise<EquitySnapshot[]> {
-  if (!isHostedReadOnly()) return localDb.getEquitySnapshots(limit);
+  if (!isReadOnlyDeployment()) return localDb.getEquitySnapshots(limit);
   const rows = await tursoRows(`SELECT * FROM equity_snapshots ORDER BY ts DESC LIMIT ?`, [limit]);
   return rows.map(localDb.rowToEquitySnapshot).reverse();
 }
 
 export async function getActiveConfigVersion(): Promise<StrategyConfigVersion> {
-  if (!isHostedReadOnly()) return localDb.getActiveConfigVersion();
+  if (!isReadOnlyDeployment()) return localDb.getActiveConfigVersion();
   const rows = await tursoRows(`SELECT * FROM strategy_config_versions WHERE applied = 1 ORDER BY id DESC LIMIT 1`);
   if (!rows[0]) throw new Error('No applied strategy config version found in Turso - has tursoSync run yet?');
   return localDb.rowToConfigVersion(rows[0]);
 }
 
 export async function getConfigVersionHistory(limit = 50): Promise<StrategyConfigVersion[]> {
-  if (!isHostedReadOnly()) return localDb.getConfigVersionHistory(limit);
+  if (!isReadOnlyDeployment()) return localDb.getConfigVersionHistory(limit);
   const rows = await tursoRows(`SELECT * FROM strategy_config_versions ORDER BY id DESC LIMIT ?`, [limit]);
   return rows.map(localDb.rowToConfigVersion);
 }
 
 export async function getAgentSuggestions(limit = 100): Promise<AgentSuggestion[]> {
-  if (!isHostedReadOnly()) return localDb.getAgentSuggestions(limit);
+  if (!isReadOnlyDeployment()) return localDb.getAgentSuggestions(limit);
   const rows = await tursoRows(`SELECT * FROM agent_suggestions ORDER BY id DESC LIMIT ?`, [limit]);
   return rows.map(localDb.rowToSuggestion);
 }
 
 export async function getRecentWalletAlerts(limit = 100): Promise<WalletAlert[]> {
-  if (!isHostedReadOnly()) return localDb.getRecentWalletAlerts(limit);
+  if (!isReadOnlyDeployment()) return localDb.getRecentWalletAlerts(limit);
   const rows = await tursoRows(`SELECT * FROM wallet_alerts ORDER BY detected_at DESC LIMIT ?`, [limit]);
   return rows.map(localDb.rowToWalletAlert);
 }
 
 export async function getMeta(key: string): Promise<string | null> {
-  if (!isHostedReadOnly()) return localDb.getMeta(key);
+  if (!isReadOnlyDeployment()) return localDb.getMeta(key);
   const rows = await tursoRows(`SELECT value FROM meta WHERE key = ?`, [key]);
   return rows[0]?.value ?? null;
 }
