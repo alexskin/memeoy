@@ -28,6 +28,7 @@ export const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
 
   aiExitReviewEnabled: true,
   aiExitReviewIntervalMs: 60_000, // token-conscious - well below priceCheckIntervalMs's 2s tick
+  aiTimeoutExtensionMs: 600_000, // +10min (half of the 20min default priceCheckDurationMs), one-time only
 
   filterCheckIntervalMs: 2000,
   filterCheckDurationMs: 60_000,

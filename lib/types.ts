@@ -50,6 +50,12 @@ export interface StrategyConfig {
   // fast).
   aiExitReviewEnabled: boolean;
   aiExitReviewIntervalMs: number;
+  // A position nearing priceCheckDurationMs's hard timeout gets exactly ONE
+  // chance, on the review closest to that deadline, for a real LLM 'hold'
+  // judgment (not a fallback) to push the deadline out by this much - never
+  // more than once, so a stalled AI can't turn this into an unbounded
+  // bag-hold excuse. See lib/portfolio/positionMonitor.ts.
+  aiTimeoutExtensionMs: number;
 
   // Filters
   filterCheckIntervalMs: number;

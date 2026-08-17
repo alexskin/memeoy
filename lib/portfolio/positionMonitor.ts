@@ -12,6 +12,7 @@ import * as ledger from './ledger';
 import { PriceSource, uiAmountToRaw } from '../priceSource/types';
 import { PEAK_PROFIT_UNSET, PositionStatus, StrategyConfig } from '../types';
 import { getTokensBatch } from '../dexscreener/client';
+import { DexScreenerPair } from '../dexscreener/types';
 import { logger } from '../logger';
 import { withTimeout } from '../solana/withTimeout';
 import { ResolvedRiskParams } from './riskParams';
@@ -68,6 +69,15 @@ export class PositionMonitor {
   // the first time it's checked, so a fresh position gets its first review
   // aiExitReviewIntervalMs after opening, not immediately.
   private lastAiExitReviewAt = new Map<number, number>();
+  // Effective timeout deadline per position, once it's been pushed out by a
+  // granted extension - absent means "use openedAt + priceCheckDurationMs
+  // unmodified". timeoutExtensionUsed caps this at exactly one grant per
+  // position, ever, regardless of how many more times nearingTimeout is
+  // true afterward (it won't be, once the deadline itself has moved, but
+  // the flag is the actual source of truth in case of an edge case where
+  // it's checked again right at the new deadline).
+  private timeoutDeadlineOverride = new Map<number, number>();
+  private timeoutExtensionUsed = new Set<number>();
   // Confirmed bug: setInterval doesn't wait for the previous tick() to
   // finish. Under RPC rate-limiting a tick can take far longer than
   // priceCheckIntervalMs, so several ticks were running concurrently, each
@@ -99,6 +109,8 @@ export class PositionMonitor {
   untrack(positionId: number) {
     this.tracked.delete(positionId);
     this.lastAiExitReviewAt.delete(positionId);
+    this.timeoutDeadlineOverride.delete(positionId);
+    this.timeoutExtensionUsed.delete(positionId);
   }
 
   trackedCount(): number {
@@ -128,10 +140,25 @@ export class PositionMonitor {
       const { config, versionId } = this.getActiveConfig();
       let openUnrealizedQuote = 0;
       const now = Date.now();
+      const trackedPositions = Array.from(this.tracked.values());
 
-      for (const position of Array.from(this.tracked.values())) {
+      // One batched DexScreener call for every tracked position's momentum,
+      // not one per position - same reasoning as watchlistMonitor.ts. Only
+      // fetched when the AI exit review is actually enabled; a fetch
+      // failure just means every position's momentum context is null this
+      // tick, not a tick failure (decideExit treats null as "unavailable").
+      let momentumByMint = new Map<string, DexScreenerPair | null>();
+      if (config.aiExitReviewEnabled && trackedPositions.length > 0) {
         try {
-          openUnrealizedQuote += await this.evaluatePosition(position, config, versionId, now);
+          momentumByMint = await getTokensBatch('solana', trackedPositions.map((p) => p.baseMint));
+        } catch (error) {
+          logger.debug({ error: String(error) }, 'positionMonitor: momentum batch fetch failed, exit reviews will see null momentum this tick');
+        }
+      }
+
+      for (const position of trackedPositions) {
+        try {
+          openUnrealizedQuote += await this.evaluatePosition(position, config, versionId, now, momentumByMint.get(position.baseMint) ?? null);
         } catch (error) {
           logger.error({ positionId: position.positionId, error: String(error) }, 'Failed to evaluate position');
         }
@@ -185,6 +212,7 @@ export class PositionMonitor {
     config: StrategyConfig,
     versionId: number,
     now: number,
+    momentum: DexScreenerPair | null,
   ): Promise<number> {
     const amountInRaw = uiAmountToRaw(position.baseAmountHeldUi, position.priceSource.baseDecimals);
     const markQuote = await withTimeout(position.priceSource.getQuote('sell', amountInRaw, 0), QUOTE_TIMEOUT_MS, 'mark-to-market quote');
@@ -198,7 +226,14 @@ export class PositionMonitor {
     }
 
     const hitStopLoss = profitPct <= -position.riskParams.stopLossPct;
-    const timedOut = config.priceCheckDurationMs > 0 && now - position.openedAt >= config.priceCheckDurationMs;
+
+    // The hard deadline starts at openedAt + priceCheckDurationMs, but can
+    // be pushed out ONCE by a real (non-fallback) AI 'hold' judgment made
+    // on the review closest to that deadline - see the AI review block
+    // below. Absent from the override map means "never extended".
+    const baseDeadline = position.openedAt + config.priceCheckDurationMs;
+    const effectiveDeadline = this.timeoutDeadlineOverride.get(position.positionId) ?? baseDeadline;
+    const timedOut = config.priceCheckDurationMs > 0 && now >= effectiveDeadline;
 
     // Stop-loss/timeout are safety-first and always fully close whatever
     // remains, skipping the scaled-target logic below entirely.
@@ -216,6 +251,11 @@ export class PositionMonitor {
       const lastReview = this.lastAiExitReviewAt.get(position.positionId) ?? position.openedAt;
       if (now - lastReview >= config.aiExitReviewIntervalMs) {
         this.lastAiExitReviewAt.set(position.positionId, now);
+
+        const extensionUsed = this.timeoutExtensionUsed.has(position.positionId);
+        const nearingTimeout =
+          config.priceCheckDurationMs > 0 && !extensionUsed && effectiveDeadline - now <= config.aiExitReviewIntervalMs;
+
         const decision = await decideExit({
           baseMint: position.baseMint,
           unrealizedPnlPct: profitPct,
@@ -224,9 +264,15 @@ export class PositionMonitor {
           stopLossPct: position.riskParams.stopLossPct,
           takeProfitPct: position.riskParams.takeProfitPct,
           recentPerformance: summarizeRecentPerformanceBySignal(),
+          recentBuys5m: momentum?.txns.m5?.buys ?? null,
+          recentBuys1h: momentum?.txns.h1?.buys ?? null,
+          volume24hUsd: momentum?.volume.h24 ?? null,
+          priceChange1hPct: momentum?.priceChange.h1 ?? null,
+          nearingTimeout,
+          timeoutExtensionAvailable: nearingTimeout,
         });
         logger.info(
-          { positionId: position.positionId, baseMint: position.baseMint, action: decision.action, source: decision.source, reasoning: decision.reasoning },
+          { positionId: position.positionId, baseMint: position.baseMint, action: decision.action, source: decision.source, reasoning: decision.reasoning, nearingTimeout },
           'AI exit review',
         );
 
@@ -241,6 +287,20 @@ export class PositionMonitor {
             decision.reasoning,
           );
           return didClose ? 0 : currentValueQuote;
+        }
+
+        // A real LLM judgment (never a fallback - see decideExit's
+        // fallbackDecision comment) choosing to hold while nearingTimeout
+        // is the one-time permission to push the deadline out. Applies
+        // immediately so later ticks this same session see the new
+        // deadline before it would otherwise have fired.
+        if (nearingTimeout && decision.source === 'llm') {
+          this.timeoutDeadlineOverride.set(position.positionId, baseDeadline + config.aiTimeoutExtensionMs);
+          this.timeoutExtensionUsed.add(position.positionId);
+          logger.info(
+            { positionId: position.positionId, baseMint: position.baseMint, extensionMs: config.aiTimeoutExtensionMs },
+            'AI granted a one-time timeout extension',
+          );
         }
       }
     }
