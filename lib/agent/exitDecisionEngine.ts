@@ -14,6 +14,11 @@ import { ANTHROPIC_API_KEY } from '../config/env';
 import { logger } from '../logger';
 
 const LLM_TIMEOUT_MS = 15000;
+// A single flaky call shouldn't silently demote a real exit judgment to the
+// fallback path (which, per the invariant above, always reverts to closing
+// on whatever trigger is active) - retry several times before actually
+// falling back.
+const MAX_ATTEMPTS = 5;
 
 export interface ExitDecisionInput {
   baseMint: string;
@@ -69,6 +74,53 @@ Outside those situations, this is a plain early-exit check: default to holding u
 
 Reply with EXACTLY this JSON shape, nothing else, no markdown fences: {"action": "hold" | "exit", "reasoning": "<one sentence, under 40 words>"}`;
 
+// One attempt: returns a real llm ExitDecision, or an error string on
+// anything that should be retried (network error, non-2xx, unparseable/
+// invalid JSON).
+async function attemptDecision(input: ExitDecisionInput, userPrompt: string): Promise<ExitDecision | string> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': ANTHROPIC_API_KEY!,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-5',
+        max_tokens: 150,
+        system: SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: userPrompt }],
+      }),
+    });
+
+    if (!response.ok) {
+      return `API call failed with status ${response.status}`;
+    }
+
+    const data = (await response.json()) as { content?: { type: string; text?: string }[] };
+    const text = data.content?.find((c) => c.type === 'text')?.text?.trim() ?? '';
+
+    const parsed = JSON.parse(text) as { action?: string; reasoning?: string };
+    if (parsed.action !== 'hold' && parsed.action !== 'exit') {
+      return `unexpected action: ${parsed.action}`;
+    }
+
+    return {
+      action: parsed.action,
+      reasoning: parsed.reasoning ?? '(no reasoning provided)',
+      source: 'llm',
+    };
+  } catch (error) {
+    return String(error);
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export async function decideExit(input: ExitDecisionInput): Promise<ExitDecision> {
   if (!ANTHROPIC_API_KEY) {
     return fallbackDecision('fallback: no ANTHROPIC_API_KEY configured, mechanical exits only');
@@ -97,47 +149,15 @@ ${momentumLine}
 ${situationLines.join('\n')}
 ${input.recentPerformance}`;
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
-  try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        'content-type': 'application/json',
-        'x-api-key': ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-5',
-        max_tokens: 150,
-        system: SYSTEM_PROMPT,
-        messages: [{ role: 'user', content: userPrompt }],
-      }),
-    });
+  let lastError = '(no attempts made)';
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const result = await attemptDecision(input, userPrompt);
+    if (typeof result !== 'string') return result;
 
-    if (!response.ok) {
-      logger.warn({ status: response.status, baseMint: input.baseMint }, 'exitDecisionEngine: API call failed, falling back to mechanical exits');
-      return fallbackDecision('fallback: LLM API call failed');
-    }
-
-    const data = (await response.json()) as { content?: { type: string; text?: string }[] };
-    const text = data.content?.find((c) => c.type === 'text')?.text?.trim() ?? '';
-
-    const parsed = JSON.parse(text) as { action?: string; reasoning?: string };
-    if (parsed.action !== 'hold' && parsed.action !== 'exit') {
-      throw new Error(`unexpected action: ${parsed.action}`);
-    }
-
-    return {
-      action: parsed.action,
-      reasoning: parsed.reasoning ?? '(no reasoning provided)',
-      source: 'llm',
-    };
-  } catch (error) {
-    logger.warn({ error: String(error), baseMint: input.baseMint }, 'exitDecisionEngine: request failed or unparseable, falling back to mechanical exits');
-    return fallbackDecision('fallback: LLM response failed or did not parse');
-  } finally {
-    clearTimeout(timeout);
+    lastError = result;
+    logger.warn({ error: result, baseMint: input.baseMint, attempt, maxAttempts: MAX_ATTEMPTS }, 'exitDecisionEngine: attempt failed');
   }
+
+  logger.warn({ baseMint: input.baseMint, attempts: MAX_ATTEMPTS }, 'exitDecisionEngine: all attempts failed, falling back to mechanical exits');
+  return fallbackDecision(`fallback: LLM failed after ${MAX_ATTEMPTS} attempts (${lastError})`);
 }

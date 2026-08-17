@@ -4,15 +4,18 @@
 // - never on every watchlist tick - to keep Anthropic API usage bounded to
 // real near-buy candidates.
 //
-// Fail-safe by design: if ANTHROPIC_API_KEY is unset, the call errors, or the
-// response doesn't parse, this falls back to today's exact deterministic
-// behavior (buy iff momentum && revival passed) with source:'fallback' - the
-// bot never silently stalls because the LLM is unavailable. Every call - buy
-// AND skip - gets persisted (lib/db.ts's insertAgentDecision) with its
-// reasoning, so a "REFUSED" candidate stays visible with a reason instead of
-// silently vanishing (inspired by omotrades.com's live reasoning feed, which
-// explicitly logs refused setups, not just accepted trades - see the plan's
-// Context section).
+// Fail-CLOSED by design (deliberate, not an oversight): this bot's whole
+// buy premise is that an actual AI judgment approved the candidate, not
+// just that it cleared the numeric gates - so if ANTHROPIC_API_KEY is
+// unset, or every retry attempt errors/times out/fails to parse, the
+// fallback is always 'skip', never a deterministic buy. Clearing
+// momentum/revival gets a candidate to this judgment step; it does not
+// substitute for the judgment itself. Every call - buy AND skip - gets
+// persisted (lib/db.ts's insertAgentDecision) with its reasoning, so a
+// "REFUSED" candidate (including an LLM-unavailable one) stays visible
+// with a reason instead of silently vanishing (inspired by omotrades.com's
+// live reasoning feed, which explicitly logs refused setups, not just
+// accepted trades - see the plan's Context section).
 import { ANTHROPIC_API_KEY } from '../config/env';
 import { MomentumEvaluation } from '../dexscreener/momentumFilter';
 import { RevivalEvaluation } from '../dexscreener/revivalFilter';
@@ -21,6 +24,10 @@ import { AgentDecisionAction, AgentDecisionSource } from '../types';
 import { logger } from '../logger';
 
 const LLM_TIMEOUT_MS = 15000;
+// A single flaky call (network blip, momentary API error, one malformed
+// response) shouldn't cost a real candidate its shot at an actual AI
+// judgment - retry several times before giving up and skipping the buy.
+const MAX_ATTEMPTS = 5;
 
 export interface DecisionInput {
   baseMint: string;
@@ -37,13 +44,12 @@ export interface Decision {
   source: AgentDecisionSource;
 }
 
-function fallbackDecision(input: DecisionInput, reasoning: string): Decision {
-  // OR, not AND: momentum and revival are alternate paths to this judgment
-  // step (see watchlistMonitor.ts), never both true for the same candidate
-  // in practice (their age windows don't overlap) - whichever one passed is
-  // what got this candidate here, so the deterministic fallback should buy.
+function fallbackDecision(reasoning: string): Decision {
+  // Always 'skip', never a deterministic buy - see the file header. Clearing
+  // momentum/revival got this candidate to the judgment step; without an
+  // actual AI response there was no judgment, so there's no buy.
   return {
-    action: input.momentum.pass || input.revival.pass ? 'buy' : 'skip',
+    action: 'skip',
     confidence: 1,
     reasoning,
     source: 'fallback',
@@ -58,18 +64,10 @@ Weigh all of it together - don't just check that the numbers cleared their bars.
 
 Reply with EXACTLY this JSON shape, nothing else, no markdown fences: {"action": "buy" | "skip", "confidence": <0-1 number>, "reasoning": "<one sentence, under 40 words>"}`;
 
-export async function decideCandidate(input: DecisionInput): Promise<Decision> {
-  if (!ANTHROPIC_API_KEY) {
-    return fallbackDecision(input, 'fallback: no ANTHROPIC_API_KEY configured, deterministic gate only');
-  }
-
-  const userPrompt = `Mint: ${input.baseMint}
-Momentum criteria: ${JSON.stringify(input.momentum.results)}
-Revival criteria: ${JSON.stringify(input.revival.results)}
-Revival strength: ${input.revival.strengthScore}/100
-Degen score: ${input.degenScore ? `${input.degenScore.score}/100 - ${input.degenScore.verdict}` : 'not available (no social link found, or scoring failed)'}
-${input.recentPerformance}`;
-
+// One attempt: returns a real llm Decision, or throws/returns an error
+// string on anything that should be retried (network error, non-2xx,
+// unparseable/invalid JSON).
+async function attemptDecision(input: DecisionInput, userPrompt: string): Promise<Decision | string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
   try {
@@ -78,7 +76,7 @@ ${input.recentPerformance}`;
       signal: controller.signal,
       headers: {
         'content-type': 'application/json',
-        'x-api-key': ANTHROPIC_API_KEY,
+        'x-api-key': ANTHROPIC_API_KEY!,
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
@@ -90,8 +88,7 @@ ${input.recentPerformance}`;
     });
 
     if (!response.ok) {
-      logger.warn({ status: response.status, baseMint: input.baseMint }, 'decisionEngine: API call failed, falling back to deterministic gate');
-      return fallbackDecision(input, 'fallback: LLM API call failed');
+      return `API call failed with status ${response.status}`;
     }
 
     const data = (await response.json()) as { content?: { type: string; text?: string }[] };
@@ -99,7 +96,7 @@ ${input.recentPerformance}`;
 
     const parsed = JSON.parse(text) as { action?: string; confidence?: number; reasoning?: string };
     if (parsed.action !== 'buy' && parsed.action !== 'skip') {
-      throw new Error(`unexpected action: ${parsed.action}`);
+      return `unexpected action: ${parsed.action}`;
     }
     const confidence = typeof parsed.confidence === 'number' ? Math.max(0, Math.min(1, parsed.confidence)) : 0.5;
 
@@ -110,9 +107,33 @@ ${input.recentPerformance}`;
       source: 'llm',
     };
   } catch (error) {
-    logger.warn({ error: String(error), baseMint: input.baseMint }, 'decisionEngine: request failed or unparseable, falling back to deterministic gate');
-    return fallbackDecision(input, 'fallback: LLM response failed or did not parse');
+    return String(error);
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export async function decideCandidate(input: DecisionInput): Promise<Decision> {
+  if (!ANTHROPIC_API_KEY) {
+    return fallbackDecision('fallback: no ANTHROPIC_API_KEY configured, skipping - buy decisions require an actual AI judgment');
+  }
+
+  const userPrompt = `Mint: ${input.baseMint}
+Momentum criteria: ${JSON.stringify(input.momentum.results)}
+Revival criteria: ${JSON.stringify(input.revival.results)}
+Revival strength: ${input.revival.strengthScore}/100
+Degen score: ${input.degenScore ? `${input.degenScore.score}/100 - ${input.degenScore.verdict}` : 'not available (no social link found, or scoring failed)'}
+${input.recentPerformance}`;
+
+  let lastError = '(no attempts made)';
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const result = await attemptDecision(input, userPrompt);
+    if (typeof result !== 'string') return result;
+
+    lastError = result;
+    logger.warn({ error: result, baseMint: input.baseMint, attempt, maxAttempts: MAX_ATTEMPTS }, 'decisionEngine: attempt failed');
+  }
+
+  logger.warn({ baseMint: input.baseMint, attempts: MAX_ATTEMPTS }, 'decisionEngine: all attempts failed, skipping - no deterministic buy without a real AI judgment');
+  return fallbackDecision(`fallback: LLM failed after ${MAX_ATTEMPTS} attempts (${lastError}), skipping`);
 }
