@@ -49,6 +49,20 @@ Everything runs in **paper mode** by default: simulated fills computed from real
    ```
    Open [http://localhost:3010](http://localhost:3010).
 
+## Running the worker in production
+
+`npm run worker` is fine for trying things out, but it dies with the terminal it's running in and won't come back after a crash or a machine restart. Wherever you actually host the worker long-term (your own machine, a VPS - never Vercel, see below), use the bundled [pm2](https://pm2.keymetrics.io/) config instead, which auto-restarts it on crash and gives you a start/stop that works from the command line - useful since the dashboard's own PAUSE/STOP/START buttons only exist on a locally-reachable, non-read-only deployment (see "Public read-only dashboard" below).
+
+```bash
+npm run worker:start    # start (or restart) it under pm2
+npm run worker:stop     # stop it
+npm run worker:restart  # restart it
+npm run worker:status   # is it running?
+npm run worker:logs     # tail its logs
+```
+
+This is independent of the dashboard's PAUSE/STOP: those pause/stop the worker's own internal discovery loop (and, at STOP, position management) while the process itself keeps running; `worker:stop` above kills the process itself. Use the dashboard controls for day-to-day pausing, and `worker:stop`/`worker:start` for deploys, restarts, or hosting it somewhere the dashboard's controls aren't available at all.
+
 ## Usage
 
 The dashboard has four tabs:

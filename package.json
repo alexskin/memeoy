@@ -7,6 +7,11 @@
     "build": "next build",
     "start": "next start",
     "worker": "tsx --env-file=.env.local scripts/worker.ts",
+    "worker:start": "pm2 start ecosystem.config.js",
+    "worker:stop": "pm2 stop memeoy-worker",
+    "worker:restart": "pm2 restart memeoy-worker",
+    "worker:status": "pm2 status memeoy-worker",
+    "worker:logs": "pm2 logs memeoy-worker",
     "migrate": "tsx --env-file=.env.local scripts/migrate.ts"
   },
   "dependencies": {
@@ -32,6 +37,7 @@
     "@types/node": "^20.14.10",
     "@types/react": "^18.3.3",
     "@types/ws": "^8.18.1",
+    "pm2": "^7.0.3",
     "tsx": "^4.23.7",
     "typescript": "^5.5.4"
   }
