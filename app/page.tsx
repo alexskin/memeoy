@@ -25,7 +25,7 @@ const READ_ONLY = process.env.NEXT_PUBLIC_READ_ONLY === 'true';
 // different concern, not what table happened to exist: Watcher owns the
 // whole detection->decision lifecycle, Portfolio owns "what did the money
 // do", Strategy owns the config+tuner feedback loop.
-const TABS = ['Watcher', 'Portfolio', 'Strategy', 'Wallet Alerts'] as const;
+const TABS = ['Watcher', 'Portfolio', 'Strategy', 'Wallet Alerts', 'Creator Launches'] as const;
 type Tab = (typeof TABS)[number];
 
 export default function Page() {
@@ -315,10 +315,6 @@ export default function Page() {
             <h2>Recent AI decisions</h2>
             <DecisionLog decisions={decisions} />
           </div>
-          <div className="panel">
-            <h2>Tracked creator launches</h2>
-            <CreatorLaunchLog launches={creatorLaunches} />
-          </div>
         </>
       )}
 
@@ -362,6 +358,13 @@ export default function Page() {
         <div className="panel">
           <h2>Wallet alerts</h2>
           <WalletAlerts alerts={walletAlerts} config={activeVersion.config} onSave={saveConfig} readOnly={READ_ONLY} />
+        </div>
+      )}
+
+      {tab === 'Creator Launches' && (
+        <div className="panel">
+          <h2>Tracked creator launches — last 2h</h2>
+          <CreatorLaunchLog launches={creatorLaunches} trackedAddresses={activeVersion?.config.trackedCreators ?? []} />
         </div>
       )}
     </div>
