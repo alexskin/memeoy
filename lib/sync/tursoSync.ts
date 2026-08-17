@@ -70,13 +70,40 @@ export async function runTursoSync(window = DEFAULT_WINDOW): Promise<void> {
   // mirror's transient inconsistency window smaller, though nothing here
   // enforces foreign keys - same as the local DB) but a lagging table just
   // catches up next tick either way.
+  //
+  // detected_pools/fills must ALSO include whatever ANY position about to
+  // be synced (open, OR within the positions table's own recency window
+  // below - not just open ones) references, unconditionally, not just
+  // their own recency window. Turso enforces the positions.
+  // detected_pool_id/entry_fill_id/exit_fill_id foreign keys (the local
+  // better-sqlite3 DB does not), so a position - open OR recently closed -
+  // can easily outlive its parent pool/fill's place in a bounded window
+  // (confirmed live: high pool-detection volume ages a pool out of the
+  // last 150 well before the positions referencing it leave the positions
+  // window). One row failing its FK check fails the WHOLE table's upsert
+  // batch, not just that row - so this silently blocked positions from
+  // reaching Turso at all. positionsWindow is duplicated inline (not
+  // factored into a shared query fragment) because `?` placeholders are
+  // positional across the whole statement - every appearance needs its own
+  // `window` arg supplied in the same order.
+  const positionsWindow = `status = 'open' OR id IN (SELECT id FROM positions ORDER BY id DESC LIMIT ?)`;
   await syncQuery(client, 'strategy_config_versions', `SELECT * FROM strategy_config_versions WHERE applied = 1 OR id IN (SELECT id FROM strategy_config_versions ORDER BY id DESC LIMIT ?)`, [window]);
-  await syncQuery(client, 'detected_pools', `SELECT * FROM detected_pools WHERE status IN ('pending','filtering','watching') OR id IN (SELECT id FROM detected_pools ORDER BY detected_at DESC LIMIT ?)`, [window]);
+  await syncQuery(
+    client,
+    'detected_pools',
+    `SELECT * FROM detected_pools WHERE status IN ('pending','filtering','watching') OR id IN (SELECT detected_pool_id FROM positions WHERE ${positionsWindow}) OR id IN (SELECT id FROM detected_pools ORDER BY detected_at DESC LIMIT ?)`,
+    [window, window],
+  );
   await syncQuery(client, 'filter_results', `SELECT * FROM filter_results ORDER BY id DESC LIMIT ?`, [window]);
   await syncQuery(client, 'momentum_snapshots', `SELECT * FROM momentum_snapshots ORDER BY id DESC LIMIT ?`, [window]);
   await syncQuery(client, 'agent_decisions', `SELECT * FROM agent_decisions ORDER BY id DESC LIMIT ?`, [window]);
-  await syncQuery(client, 'fills', `SELECT * FROM fills ORDER BY id DESC LIMIT ?`, [window]);
-  await syncQuery(client, 'positions', `SELECT * FROM positions WHERE status = 'open' OR id IN (SELECT id FROM positions ORDER BY id DESC LIMIT ?)`, [window]);
+  await syncQuery(
+    client,
+    'fills',
+    `SELECT * FROM fills WHERE id IN (SELECT entry_fill_id FROM positions WHERE ${positionsWindow}) OR id IN (SELECT exit_fill_id FROM positions WHERE ${positionsWindow}) OR id IN (SELECT id FROM fills ORDER BY id DESC LIMIT ?)`,
+    [window, window, window],
+  );
+  await syncQuery(client, 'positions', `SELECT * FROM positions WHERE ${positionsWindow}`, [window]);
   await syncQuery(client, 'partial_exits', `SELECT * FROM partial_exits ORDER BY id DESC LIMIT ?`, [window]);
   await syncQuery(client, 'equity_snapshots', `SELECT * FROM equity_snapshots ORDER BY id DESC LIMIT ?`, [window]);
   await syncQuery(client, 'agent_suggestions', `SELECT * FROM agent_suggestions ORDER BY id DESC LIMIT ?`, [window]);
