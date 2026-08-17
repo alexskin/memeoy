@@ -48,9 +48,16 @@ export function positionSizeQuote(config: StrategyConfig, balance: number): numb
   return config.positionSizeMode === 'fixed' ? config.positionSizeValue : balance * config.positionSizeValue;
 }
 
-export function canOpenPosition(config: StrategyConfig): boolean {
+export function canOpenPosition(config: StrategyConfig, baseMint: string): boolean {
+  const open = getOpenPositions();
+  if (open.length >= config.maxConcurrentPositions) return false;
+  // A pool can end up graduating to a buy twice for the same token (e.g.
+  // two worker processes briefly overlapping during a restart, both seeing
+  // the same 'watching' candidate before either commits its status update -
+  // confirmed live) - refuse a second position in a token that already has
+  // one open, regardless of why the duplicate graduation happened.
+  if (open.some((p) => p.baseMint === baseMint)) return false;
   const balance = getVirtualBalance(config);
-  if (getOpenPositions().length >= config.maxConcurrentPositions) return false;
   return balance >= positionSizeQuote(config, balance);
 }
 

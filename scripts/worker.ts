@@ -330,7 +330,7 @@ async function main() {
   }
 
   async function executeBuy(ctx: DetectionContext, config: StrategyConfig, versionId: number) {
-    if (!ledger.canOpenPosition(config)) {
+    if (!ledger.canOpenPosition(config, ctx.baseMint)) {
       updatePoolStatus(ctx.detectedPoolId, 'skipped');
       broadcast('pool.status', { id: ctx.detectedPoolId, status: 'skipped' });
       return;
