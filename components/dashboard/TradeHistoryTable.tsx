@@ -13,6 +13,7 @@ const STATUS_LABEL: Record<string, string> = {
   closed_sl: 'stop loss',
   closed_timeout: 'timeout',
   closed_manual: 'manual',
+  closed_ai_exit: 'AI exit',
 };
 
 function formatMc(mc: number | null): string {
@@ -79,7 +80,15 @@ export function TradeHistoryTable({ trades }: { trades: TradeRow[] }) {
                   '—'
                 )}
               </td>
-              <td>{STATUS_LABEL[t.status] ?? t.status}</td>
+              <td>
+                {t.aiExitReasoning ? (
+                  <span className="badge neutral" title={t.aiExitReasoning}>
+                    {STATUS_LABEL[t.status] ?? t.status}
+                  </span>
+                ) : (
+                  STATUS_LABEL[t.status] ?? t.status
+                )}
+              </td>
               <td className={pnlPct >= 0 ? 'pos' : 'neg'}>
                 {pnlPct >= 0 ? '+' : ''}
                 {pnlPct.toFixed(1)}%
