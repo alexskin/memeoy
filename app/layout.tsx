@@ -2,9 +2,27 @@ import "./globals.css";
 import type { Metadata } from "next";
 import { Analytics } from "@vercel/analytics/next";
 
+const DESCRIPTION =
+  "AI-watched Solana memecoin trading bot - paper mode by default, real market data, opt-in live trading";
+
 export const metadata: Metadata = {
+  metadataBase: new URL("https://memeoy.vercel.app"),
   title: "Memeoy",
-  description: "AI-watched Solana memecoin trading bot - paper mode by default, real market data, opt-in live trading",
+  description: DESCRIPTION,
+  keywords: ["solana", "memecoin", "trading bot", "ai agent", "paper trading", "crypto"],
+  robots: { index: true, follow: true },
+  openGraph: {
+    title: "Memeoy",
+    description: DESCRIPTION,
+    url: "/",
+    siteName: "Memeoy",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Memeoy",
+    description: DESCRIPTION,
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
