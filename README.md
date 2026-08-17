@@ -63,6 +63,14 @@ npm run worker:logs     # tail its logs
 
 This is independent of the dashboard's PAUSE/STOP: those pause/stop the worker's own internal discovery loop (and, at STOP, position management) while the process itself keeps running; `worker:stop` above kills the process itself. Use the dashboard controls for day-to-day pausing, and `worker:stop`/`worker:start` for deploys, restarts, or hosting it somewhere the dashboard's controls aren't available at all.
 
+**Auto-start on Windows boot/login (optional, Windows only):** to have pm2 resurrect the worker automatically, install the small helper *locally on that machine* rather than adding it to this repo's `package.json` - it pulls in a Windows-only native module that breaks `npm install` on any other platform, including Vercel's Linux build:
+
+```bash
+npm install -g pm2-windows-startup
+npx pm2-startup install
+npx pm2 save   # after starting the worker with worker:start - saves the process list to resurrect
+```
+
 ## Usage
 
 The dashboard has four tabs:
