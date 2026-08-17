@@ -53,8 +53,7 @@ async function upsertRows(client: Client, table: string, rows: any[], conflictCo
   );
 }
 
-async function syncQuery(client: Client, table: string, sql: string, args: unknown[] = [], conflictColumn = 'id') {
-  const rows = getDb().prepare(sql).all(...(args as any[])) as any[];
+async function pushRows(client: Client, table: string, rows: any[], conflictColumn = 'id') {
   try {
     await upsertRows(client, table, rows, conflictColumn);
   } catch (error) {
@@ -62,58 +61,76 @@ async function syncQuery(client: Client, table: string, sql: string, args: unkno
   }
 }
 
+async function syncQuery(client: Client, table: string, sql: string, args: unknown[] = [], conflictColumn = 'id') {
+  const rows = getDb().prepare(sql).all(...(args as any[])) as any[];
+  await pushRows(client, table, rows, conflictColumn);
+}
+
 export async function runTursoSync(window = DEFAULT_WINDOW): Promise<void> {
   if (!tursoSyncEnabled()) return;
   const client = getTursoClient();
+  const db = getDb();
+
+  await syncQuery(client, 'strategy_config_versions', `SELECT * FROM strategy_config_versions WHERE applied = 1 OR id IN (SELECT id FROM strategy_config_versions ORDER BY id DESC LIMIT ?)`, [window]);
+
+  // Turso enforces FKs the local better-sqlite3 DB does not (positions ->
+  // detected_pools/fills, filter_results/agent_decisions -> detected_pools),
+  // and ONE row failing its FK check fails the WHOLE batch, not just that
+  // row - so any parent missing from its child's sync tick silently blocks
+  // the whole child table from ever reaching Turso.
+  //
+  // The naive fix (re-querying "referenced pool/fill ids" via a fresh SELECT
+  // run moments after the child rows were read) has a real race: this
+  // function is not a DB transaction/snapshot, and each Turso upsert below
+  // is a real network round-trip the local worker keeps writing through -
+  // by the time a later SELECT re-runs, newer child rows can exist that a
+  // slightly-earlier parent-coverage SELECT never saw (confirmed live: high
+  // filter_results insert volume outpaced the gap between two sequential
+  // local queries). The actual fix is to never re-query: read each child
+  // table's rows ONCE here, and derive every parent id directly from those
+  // exact in-memory rows - there is then no window for the two to disagree,
+  // regardless of how much the local DB changes underneath us afterward.
+  const positionsRows = db
+    .prepare(`SELECT * FROM positions WHERE status = 'open' OR id IN (SELECT id FROM positions ORDER BY id DESC LIMIT ?)`)
+    .all(window) as any[];
+  const filterResultsRows = db.prepare(`SELECT * FROM filter_results ORDER BY id DESC LIMIT ?`).all(window) as any[];
+  const agentDecisionsRows = db.prepare(`SELECT * FROM agent_decisions ORDER BY id DESC LIMIT ?`).all(window) as any[];
+
+  const referencedPoolIds = new Set<number>();
+  for (const r of positionsRows) if (r.detected_pool_id != null) referencedPoolIds.add(r.detected_pool_id);
+  for (const r of filterResultsRows) referencedPoolIds.add(r.detected_pool_id);
+  for (const r of agentDecisionsRows) referencedPoolIds.add(r.detected_pool_id);
+  const poolIdList = [...referencedPoolIds];
+  const poolIdPlaceholder = poolIdList.length > 0 ? poolIdList.map(() => '?').join(',') : 'NULL';
+
+  const detectedPoolsRows = db
+    .prepare(
+      `SELECT * FROM detected_pools WHERE status IN ('pending','filtering','watching') OR id IN (${poolIdPlaceholder}) OR id IN (SELECT id FROM detected_pools ORDER BY detected_at DESC LIMIT ?)`,
+    )
+    .all(...poolIdList, window) as any[];
+
+  const referencedFillIds = new Set<number>();
+  for (const r of positionsRows) {
+    if (r.entry_fill_id != null) referencedFillIds.add(r.entry_fill_id);
+    if (r.exit_fill_id != null) referencedFillIds.add(r.exit_fill_id);
+  }
+  const fillIdList = [...referencedFillIds];
+  const fillIdPlaceholder = fillIdList.length > 0 ? fillIdList.map(() => '?').join(',') : 'NULL';
+
+  const fillsRows = db
+    .prepare(`SELECT * FROM fills WHERE id IN (${fillIdPlaceholder}) OR id IN (SELECT id FROM fills ORDER BY id DESC LIMIT ?)`)
+    .all(...fillIdList, window) as any[];
 
   // Order matters a little (referenced-before-referencing keeps the public
-  // mirror's transient inconsistency window smaller, though nothing here
-  // enforces foreign keys - same as the local DB) but a lagging table just
-  // catches up next tick either way.
-  //
-  // detected_pools/fills must ALSO include whatever ANY position about to
-  // be synced (open, OR within the positions table's own recency window
-  // below - not just open ones) references, unconditionally, not just
-  // their own recency window. Turso enforces the positions.
-  // detected_pool_id/entry_fill_id/exit_fill_id foreign keys (the local
-  // better-sqlite3 DB does not), so a position - open OR recently closed -
-  // can easily outlive its parent pool/fill's place in a bounded window
-  // (confirmed live: high pool-detection volume ages a pool out of the
-  // last 150 well before the positions referencing it leave the positions
-  // window). One row failing its FK check fails the WHOLE table's upsert
-  // batch, not just that row - so this silently blocked positions from
-  // reaching Turso at all. positionsWindow is duplicated inline (not
-  // factored into a shared query fragment) because `?` placeholders are
-  // positional across the whole statement - every appearance needs its own
-  // `window` arg supplied in the same order.
-  //
-  // Same failure mode independently hit filter_results/agent_decisions:
-  // both also carry a detected_pool_id FK, and their own "last window rows
-  // by id" pull can easily reference a pool that's aged out of
-  // detected_pools' own window (pool-detection volume is much higher than
-  // filter/decision volume) - confirmed live via the exact same
-  // whole-batch FK failure. Since filter_results/agent_decisions are only
-  // ever synced as their last `window` rows (no other predicate), the fix
-  // is the same shape: detected_pools must also include any pool
-  // referenced by the last `window` rows of each.
-  const positionsWindow = `status = 'open' OR id IN (SELECT id FROM positions ORDER BY id DESC LIMIT ?)`;
-  await syncQuery(client, 'strategy_config_versions', `SELECT * FROM strategy_config_versions WHERE applied = 1 OR id IN (SELECT id FROM strategy_config_versions ORDER BY id DESC LIMIT ?)`, [window]);
-  await syncQuery(
-    client,
-    'detected_pools',
-    `SELECT * FROM detected_pools WHERE status IN ('pending','filtering','watching') OR id IN (SELECT detected_pool_id FROM positions WHERE ${positionsWindow}) OR id IN (SELECT detected_pool_id FROM filter_results ORDER BY id DESC LIMIT ?) OR id IN (SELECT detected_pool_id FROM agent_decisions ORDER BY id DESC LIMIT ?) OR id IN (SELECT id FROM detected_pools ORDER BY detected_at DESC LIMIT ?)`,
-    [window, window, window, window],
-  );
-  await syncQuery(client, 'filter_results', `SELECT * FROM filter_results ORDER BY id DESC LIMIT ?`, [window]);
+  // mirror's transient inconsistency window smaller, though Turso itself
+  // enforces nothing about the order these arrive in within one tick) but a
+  // lagging table just catches up next tick either way.
+  await pushRows(client, 'detected_pools', detectedPoolsRows);
+  await pushRows(client, 'filter_results', filterResultsRows);
   await syncQuery(client, 'momentum_snapshots', `SELECT * FROM momentum_snapshots ORDER BY id DESC LIMIT ?`, [window]);
-  await syncQuery(client, 'agent_decisions', `SELECT * FROM agent_decisions ORDER BY id DESC LIMIT ?`, [window]);
-  await syncQuery(
-    client,
-    'fills',
-    `SELECT * FROM fills WHERE id IN (SELECT entry_fill_id FROM positions WHERE ${positionsWindow}) OR id IN (SELECT exit_fill_id FROM positions WHERE ${positionsWindow}) OR id IN (SELECT id FROM fills ORDER BY id DESC LIMIT ?)`,
-    [window, window, window],
-  );
-  await syncQuery(client, 'positions', `SELECT * FROM positions WHERE ${positionsWindow}`, [window]);
+  await pushRows(client, 'agent_decisions', agentDecisionsRows);
+  await pushRows(client, 'fills', fillsRows);
+  await pushRows(client, 'positions', positionsRows);
   await syncQuery(client, 'partial_exits', `SELECT * FROM partial_exits ORDER BY id DESC LIMIT ?`, [window]);
   await syncQuery(client, 'equity_snapshots', `SELECT * FROM equity_snapshots ORDER BY id DESC LIMIT ?`, [window]);
   await syncQuery(client, 'agent_suggestions', `SELECT * FROM agent_suggestions ORDER BY id DESC LIMIT ?`, [window]);
