@@ -223,6 +223,17 @@ export function getDetectedPoolById(id: number): DetectedPool | null {
   return row ? rowToDetectedPool(row) : null;
 }
 
+// For lib/agent/runnerReview.ts - every pool detected since sinceMs,
+// regardless of current status (bought/skipped/rejected/still watching).
+// Rows are never deleted on eviction/rejection (see watchlistMonitor.ts),
+// so this stays a complete, queryable history.
+export function getDetectedPoolsInWindow(sinceMs: number): DetectedPool[] {
+  return getDb()
+    .prepare(`SELECT * FROM detected_pools WHERE detected_at >= ? ORDER BY detected_at ASC`)
+    .all(sinceMs)
+    .map(rowToDetectedPool);
+}
+
 // Partitions the shared 'watching' status by source - the PumpSwap/Raydium
 // momentum watchlist (DexScreener-driven) and the pump.fun premigration
 // growth watchlist (RPC+RugCheck-driven) both park candidates in the same
@@ -288,6 +299,17 @@ export function rowToMomentumSnapshot(row: any): MomentumSnapshot {
 export function getLatestMomentumSnapshot(detectedPoolId: number): MomentumSnapshot | null {
   const row = getDb()
     .prepare(`SELECT * FROM momentum_snapshots WHERE detected_pool_id = ? ORDER BY checked_at DESC LIMIT 1`)
+    .get(detectedPoolId);
+  return row ? rowToMomentumSnapshot(row) : null;
+}
+
+// For lib/agent/runnerReview.ts - the pool's condition when we FIRST saw it
+// (liquidity/1h-buys/5m-buys/age), as opposed to getLatestMomentumSnapshot's
+// most-recent reading - entry-time metrics are what a threshold tune should
+// reason about, not whatever the last poll before eviction happened to see.
+export function getEarliestMomentumSnapshotForPool(detectedPoolId: number): MomentumSnapshot | null {
+  const row = getDb()
+    .prepare(`SELECT * FROM momentum_snapshots WHERE detected_pool_id = ? ORDER BY checked_at ASC LIMIT 1`)
     .get(detectedPoolId);
   return row ? rowToMomentumSnapshot(row) : null;
 }
@@ -689,6 +711,16 @@ export function applyPartialExit(
 
 export function getPositionById(id: number): Position | null {
   const row = getDb().prepare(`SELECT * FROM positions WHERE id = ?`).get(id);
+  return row ? rowToPosition(row) : null;
+}
+
+// For lib/agent/runnerReview.ts - "did we ever buy this pool, and how did it
+// go" for a pool we're checking against fresh runner data. A pool can only
+// ever produce at most one position (canOpenPosition in ledger.ts refuses a
+// second open position in the same baseMint), so LIMIT 1 is exact, not a
+// heuristic pick.
+export function getPositionByDetectedPoolId(detectedPoolId: number): Position | null {
+  const row = getDb().prepare(`SELECT * FROM positions WHERE detected_pool_id = ? ORDER BY id DESC LIMIT 1`).get(detectedPoolId);
   return row ? rowToPosition(row) : null;
 }
 

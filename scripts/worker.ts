@@ -65,6 +65,7 @@ import {
 import { PEAK_PROFIT_UNSET, StrategyConfig } from '../lib/types';
 import { PriceSource, Venue } from '../lib/priceSource/types';
 import { maybeRunAgent } from '../lib/agent/agentRunner';
+import { maybeRunRunnerReview } from '../lib/agent/runnerReview';
 import { acquireWorkerLock } from '../lib/workerLock';
 import { checkHolderConcentration } from '../lib/filters/holderConcentrationFilter';
 import { checkInsiderConcentration } from '../lib/filters/insiderFilter';
@@ -866,6 +867,16 @@ async function main() {
       runTursoSync().catch((error) => logger.warn({ error: String(error) }, 'tursoSync tick failed, will retry next tick'));
     }, 20_000);
   }
+
+  // ---- runner review (lib/agent/runnerReview.ts) ----
+  // Own interval, independent of the trade-count-triggered maybeRunAgent
+  // call above - checks its own last-run meta timestamp against
+  // runnerReviewIntervalMs internally, so this poll can run often (1min)
+  // without spamming DexScreener; runnerReviewEnabled=false in the active
+  // config makes every tick here a no-op.
+  setInterval(() => {
+    maybeRunRunnerReview(broadcast).catch((error) => logger.warn({ error: String(error) }, 'Runner review tick failed, will retry next tick'));
+  }, 60_000);
 
   // ---- heartbeat ----
   // Reports actual pipeline liveness (last real pool event, last completed

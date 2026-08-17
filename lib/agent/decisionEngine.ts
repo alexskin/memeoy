@@ -35,6 +35,10 @@ export interface DecisionInput {
   revival: RevivalEvaluation;
   degenScore: DegenScoreResult | null;
   recentPerformance: string;
+  /** From lib/agent/stats.ts::summarizeMissedRunnersBySignal - where the
+   * degen-score judgment missed a real runner before, by score bucket.
+   * Advisory context only, same as recentPerformance - never a hard gate. */
+  missedRunnerCalibration: string;
 }
 
 export interface Decision {
@@ -58,7 +62,7 @@ function fallbackDecision(reasoning: string): Decision {
 
 const SYSTEM_PROMPT = `You are the final judgment gate for a Solana memecoin PAPER-TRADING bot (simulated fills, no real funds, no real wallet). A candidate has already cleared two deterministic numeric gates (momentum + a "revival" pattern: pumped, went flat, just started a fresh small uptick). Your job is to decide whether this specific candidate is actually worth buying, or whether it's a manufactured/wash-traded bait pump dressed up to look like a real revival.
 
-You will be given: the momentum criteria results, the revival criteria results and a 0-100 strength score, an optional 0-100 "degen score" (how organic vs. manufactured the token's social/website presence feels - null if no link was found), and a summary of how similar past signal combinations actually performed.
+You will be given: the momentum criteria results, the revival criteria results and a 0-100 strength score, an optional 0-100 "degen score" (how organic vs. manufactured the token's social/website presence feels - null if no link was found), a summary of how similar past signal combinations actually performed, and a missed-runner calibration line showing what fraction of past skips in each degen-score bucket later turned into a real big mover. Use that last line to recalibrate how much weight you give degen score - if low-degen-score skips have been missing real runners often, don't let a low score alone drive a skip.
 
 Weigh all of it together - don't just check that the numbers cleared their bars. A high revival strength with a low degen score (numbers look right, narrative looks fake) is exactly the kind of case where you should lean toward skipping. Use the recent-performance summary to calibrate how much to trust a given signal combination, not as a hard rule.
 
@@ -123,7 +127,8 @@ Momentum criteria: ${JSON.stringify(input.momentum.results)}
 Revival criteria: ${JSON.stringify(input.revival.results)}
 Revival strength: ${input.revival.strengthScore}/100
 Degen score: ${input.degenScore ? `${input.degenScore.score}/100 - ${input.degenScore.verdict}` : 'not available (no social link found, or scoring failed)'}
-${input.recentPerformance}`;
+${input.recentPerformance}
+${input.missedRunnerCalibration}`;
 
   let lastError = '(no attempts made)';
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {

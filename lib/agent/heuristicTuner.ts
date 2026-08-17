@@ -14,7 +14,10 @@ export interface ProposedDiff {
 // Infra-realism knobs (latencyModel) are deliberately excluded - see
 // lib/fillSimulator/latencyModel.ts. Everything else here is a genuine
 // strategy lever.
-const BOUNDS = {
+// Exported so lib/agent/runnerReview.ts's rules can clamp their own
+// proposed steps against the exact same bounds table, instead of
+// duplicating a second copy of "how far is this knob allowed to move."
+export const BOUNDS = {
   buySlippagePct: [1, 50],
   sellSlippagePct: [1, 50],
   takeProfitPct: [5, 200],
@@ -38,9 +41,16 @@ const BOUNDS = {
   // context string passed into that prompt instead (see decisionEngine.ts).
   revivalMin1hBuys: [5, 100],
   revivalMinLiquidityUsd: [5_000, 100_000],
+  // Exit-side knobs, added for lib/agent/runnerReview.ts's bought-runner
+  // exit-timing rules (e.g. a runner getting stopped out/timed out well
+  // before its real move) - not used by this file's own rules.
+  priceCheckDurationMs: [5 * 60_000, 4 * 60 * 60_000],
+  aiTimeoutExtensionMs: [2 * 60_000, 60 * 60_000],
+  trailingActivationPct: [5, 150],
 } as const;
 
-function clampStep(current: number, direction: 1 | -1, pct: number, bounds: readonly [number, number]): number {
+// Exported for the same reason as BOUNDS above.
+export function clampStep(current: number, direction: 1 | -1, pct: number, bounds: readonly [number, number]): number {
   const stepped = current * (1 + direction * pct);
   return Math.min(bounds[1], Math.max(bounds[0], Number(stepped.toFixed(4))));
 }

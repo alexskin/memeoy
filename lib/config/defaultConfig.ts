@@ -85,6 +85,16 @@ export const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
   revivalMin1hBuys: 15,
   revivalMinLiquidityUsd: 20_000,
 
+  // Runner review defaults: every 4h, look at pools detected in the last 6h
+  // (bought or skipped) and re-check them against CURRENT DexScreener data -
+  // "runner" = +150% in 24h with at least $3k of live liquidity (a floor
+  // against illiquid wicks that swing wildly on trivial volume).
+  runnerReviewEnabled: true,
+  runnerReviewIntervalMs: 4 * 60 * 60 * 1000,
+  runnerLookbackHours: 6,
+  runnerThresholdPct: 150,
+  runnerMinLiquidityUsd: 3_000,
+
   degenScoreEnabled: true,
   decisionEngineEnabled: true,
 

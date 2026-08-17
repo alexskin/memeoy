@@ -10,7 +10,8 @@ import { evaluateRevival } from '../dexscreener/revivalFilter';
 import { getSocialLinkFromPair } from '../filters/socialLink';
 import { getDegenScore } from '../degenScore/client';
 import { decideCandidate } from '../agent/decisionEngine';
-import { summarizeRecentPerformanceBySignal } from '../agent/stats';
+import { summarizeMissedRunnersBySignal, summarizeRecentPerformanceBySignal } from '../agent/stats';
+import { getLastRunnerReviewStats } from '../agent/runnerReview';
 import { getWatchlistPoolsBySource, insertAgentDecision, insertMomentumSnapshot, updatePoolStatus } from '../db';
 import { DetectedPool, StrategyConfig } from '../types';
 import { logger } from '../logger';
@@ -143,6 +144,7 @@ export class WatchlistMonitor {
                   revival,
                   degenScore: degen,
                   recentPerformance: summarizeRecentPerformanceBySignal(),
+                  missedRunnerCalibration: summarizeMissedRunnersBySignal(getLastRunnerReviewStats()),
                 })
               : {
                   action: 'buy' as const,

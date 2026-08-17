@@ -3,6 +3,7 @@
 // reflect how the strategy actually would have performed.
 import { AgentDecision, MomentumSnapshot, Position, SimulatedFill } from '../types';
 import { getClosedPositions, getLatestAgentDecisionBeforeBuy } from '../db';
+import { RunnerReviewStats } from './runnerReview';
 
 export interface TradeWithFills extends Position {
   entryFill: SimulatedFill | null;
@@ -95,6 +96,31 @@ export function summarizeRecentPerformanceBySignal(limit = 200): string {
   return lines.length > 0
     ? `Recent outcomes by signal bucket (last ${trades.length} decided trades): ${lines.join('; ')}.`
     : `${trades.length} recent decided trades, but no signal bucket has 2+ samples yet - too early to see a pattern.`;
+}
+
+// Sibling to summarizeRecentPerformanceBySignal above, but reasons about
+// SKIPPED candidates instead of trade outcomes - specifically, where the
+// degen-score judgment was wrong (skipped it, but it went on to become a
+// real runner - see lib/agent/runnerReview.ts). Deliberately advisory only:
+// this is fed into decisionEngine.ts's prompt as context for the LLM to
+// recalibrate its OWN weighting of degen score, not a hard numeric gate -
+// degen score stays LLM-context-only by design (see heuristicTuner.ts's
+// BOUNDS comment and decisionEngine.ts's header).
+export function summarizeMissedRunnersBySignal(runnerStats: RunnerReviewStats | null): string {
+  if (!runnerStats || runnerStats.degenBuckets.every((b) => b.skippedCount === 0)) {
+    return 'No runner-review data yet for missed-runner calibration by degen score.';
+  }
+
+  const lines = runnerStats.degenBuckets
+    .filter((b) => b.skippedCount >= 2)
+    .map(
+      (b) =>
+        `degen:${b.bucket} skipped: ${b.missedRunnerCount}/${b.skippedCount} turned into runners we missed (${((b.missedRunnerCount / b.skippedCount) * 100).toFixed(0)}%)`,
+    );
+
+  return lines.length > 0
+    ? `Missed-runner calibration by degen-score bucket (last ${runnerStats.windowHours}h, +${runnerStats.runnerThresholdPct}% threshold): ${lines.join('; ')}.`
+    : `Runner-review data exists but no degen-score bucket has 2+ skipped samples yet - too early to calibrate.`;
 }
 
 export function computeStats(trades: TradeWithFills[], equitySeries: number[] = []): AgentStats {

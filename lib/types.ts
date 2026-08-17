@@ -118,6 +118,18 @@ export interface StrategyConfig {
   revivalMin1hBuys: number;
   revivalMinLiquidityUsd: number;
 
+  // Runner review (lib/agent/runnerReview.ts) - periodic, independent of the
+  // trade-count-triggered heuristicTuner: re-checks recently detected pools
+  // (bought or skipped) against CURRENT DexScreener data to find genuine
+  // "runners" (big recent movers) regardless of whether we ever traded them,
+  // and proposes filter/entry/exit tuning from that - the trade-outcome
+  // tuner alone can never see a token we skipped and never bought.
+  runnerReviewEnabled: boolean;
+  runnerReviewIntervalMs: number;
+  runnerLookbackHours: number;
+  runnerThresholdPct: number;
+  runnerMinLiquidityUsd: number;
+
   // AI judgment layer (lib/agent/decisionEngine.ts) - runs once a candidate
   // has already cleared momentum + revival, right before the buy would
   // otherwise fire automatically. Both are kill-switches: false reverts
@@ -471,7 +483,7 @@ export interface AgentSuggestion {
   basedOnVersionId: number;
   proposedVersionId: number | null;
   status: AgentSuggestionStatus;
-  source: 'heuristic' | 'llm';
+  source: 'heuristic' | 'llm' | 'runner-review';
   rationale: string;
   statsSnapshot: unknown;
   diff: Record<string, { old: unknown; new: unknown }>;
