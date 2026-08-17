@@ -195,6 +195,14 @@ export interface StrategyConfig {
   walletAlertTrailingStopPct: number;
   walletAlertMaxHoldMinutes: number;
 
+  // Creator-launch tracking: alerts (never trades) when a tracked wallet
+  // CREATES a brand-new pump.fun token, as opposed to trackedWallets above
+  // which watches for BUYS. Reuses the same always-on pump.fun creation log
+  // listener the pre-migration watchlist uses (scripts/worker.ts), so this
+  // works regardless of whether pumpfunPremigrationEnabled trading is on.
+  // Empty array disables it.
+  trackedCreators: string[];
+
   // Pre-migration pump.fun growth watchlist (lib/watchlist/
   // premigrationWatchlistMonitor.ts): a SEPARATE cohort from the
   // PumpSwap/Raydium momentum watchlist above - candidates here are
@@ -262,6 +270,21 @@ export interface WalletAlert {
   suggestedTarget2Pct: number;
   suggestedTrailingStopPct: number;
   suggestedMaxHoldMinutes: number;
+}
+
+// A tracked creator wallet launching a brand-new token (pump.fun's Create
+// instruction, decoded straight off the log stream - see
+// lib/pumpfun/createEventDecoder.ts). Deliberately separate from
+// WalletAlert (which tracks a wallet BUYING an existing token and carries
+// copy-trade SL/TP suggestion fields that don't apply here) - "this wallet
+// created a token" is a different signal from "this wallet bought one".
+export interface CreatorLaunch {
+  id: number;
+  creatorAddress: string;
+  mint: string;
+  name: string;
+  symbol: string;
+  detectedAt: number;
 }
 
 export interface MomentumCriterionResult {

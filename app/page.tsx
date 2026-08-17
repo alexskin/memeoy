@@ -1,9 +1,10 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
 import { useWorkerSocket, WorkerMessage } from '../lib/ws/client';
-import { AgentDecisionDetailed, AgentSuggestion, DetectedPool, EquitySnapshot, FilterOutcome, MomentumCriterionResult, StrategyConfig, StrategyConfigVersion, WalletAlert } from '../lib/types';
+import { AgentDecisionDetailed, AgentSuggestion, CreatorLaunch, DetectedPool, EquitySnapshot, FilterOutcome, MomentumCriterionResult, StrategyConfig, StrategyConfigVersion, WalletAlert } from '../lib/types';
 import { WatcherTable, WatcherRow } from '../components/dashboard/WatcherTable';
 import { DecisionLog } from '../components/dashboard/DecisionLog';
+import { CreatorLaunchLog } from '../components/dashboard/CreatorLaunchLog';
 import { StatsStrip } from '../components/dashboard/StatsStrip';
 import { PositionsTable, LivePositionInfo, PositionRow } from '../components/dashboard/PositionsTable';
 import { TradeHistoryTable, TradeRow } from '../components/dashboard/TradeHistoryTable';
@@ -32,6 +33,7 @@ export default function Page() {
 
   const [pools, setPools] = useState<WatcherRow[]>([]);
   const [decisions, setDecisions] = useState<AgentDecisionDetailed[]>([]);
+  const [creatorLaunches, setCreatorLaunches] = useState<CreatorLaunch[]>([]);
   const [walletAlerts, setWalletAlerts] = useState<WalletAlert[]>([]);
   const [positions, setPositions] = useState<PositionRow[]>([]);
   const [livePositions, setLivePositions] = useState<Record<number, LivePositionInfo>>({});
@@ -49,7 +51,7 @@ export default function Page() {
     // rows means less of app/api/pools's per-row Turso fan-out per request.
     const poolsLimit = READ_ONLY ? 40 : 100;
     const decisionsLimit = READ_ONLY ? 25 : 50;
-    const [poolsRes, decisionsRes, positionsRes, tradesRes, equityRes, configRes, historyRes, suggestionsRes, healthRes, controlRes, walletAlertsRes] =
+    const [poolsRes, decisionsRes, positionsRes, tradesRes, equityRes, configRes, historyRes, suggestionsRes, healthRes, controlRes, walletAlertsRes, creatorLaunchesRes] =
       await Promise.all([
         fetch(`/api/pools?limit=${poolsLimit}`).then((r) => r.json()),
         fetch(`/api/decisions?limit=${decisionsLimit}`).then((r) => r.json()),
@@ -62,9 +64,11 @@ export default function Page() {
         fetch('/api/health').then((r) => r.json()),
         fetch('/api/control').then((r) => r.json()),
         fetch('/api/wallet-alerts').then((r) => r.json()),
+        fetch('/api/creator-launches').then((r) => r.json()),
       ]);
     setPools(poolsRes.pools);
     setDecisions(decisionsRes.decisions);
+    setCreatorLaunches(creatorLaunchesRes.launches);
     setPositions(positionsRes.positions);
     setTrades(tradesRes.trades);
     setSnapshots(equityRes.snapshots);
@@ -225,6 +229,11 @@ export default function Page() {
         case 'wallet.alert':
           refreshAll();
           break;
+        case 'creator.launch': {
+          const launch = msg.payload as CreatorLaunch;
+          setCreatorLaunches((prev) => [launch, ...prev].slice(0, 100));
+          break;
+        }
       }
     },
     [refreshAll],
@@ -305,6 +314,10 @@ export default function Page() {
           <div className="panel">
             <h2>Recent AI decisions</h2>
             <DecisionLog decisions={decisions} />
+          </div>
+          <div className="panel">
+            <h2>Tracked creator launches</h2>
+            <CreatorLaunchLog launches={creatorLaunches} />
           </div>
         </>
       )}

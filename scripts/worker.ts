@@ -56,6 +56,7 @@ import {
   getPartialExitsForPosition,
   getSellAllRequestedAt,
   getWorkerControlState,
+  insertCreatorLaunch,
   insertDetectedPool,
   insertFilterResult,
   insertFill,
@@ -663,6 +664,15 @@ async function main() {
 
   pumpFunListener.on('creation', (event) => {
     lastPoolEventAt = Date.now();
+
+    // Creator-launch tracking - deliberately independent of
+    // pumpfunPremigrationEnabled below (a pure watch/alert feature, never
+    // trades) and of the seen-mints dedupe (every mint is only ever created
+    // once, so there's nothing to dedupe against here).
+    handleCreatorTracking(event).catch((error) =>
+      logger.error({ mint: event.mint.toString(), error: String(error) }, 'handleCreatorTracking failed'),
+    );
+
     const mintStr = event.mint.toString();
     if (pumpFunSeenMints.has(mintStr)) return;
     pumpFunSeenMints.add(mintStr);
@@ -671,6 +681,25 @@ async function main() {
       logger.error({ mint: mintStr, error: String(error) }, 'handlePumpFunCreation failed'),
     );
   });
+
+  async function handleCreatorTracking(event: PumpFunCreateEvent) {
+    const { config } = getActiveConfig();
+    if (config.trackedCreators.length === 0) return;
+
+    const creatorStr = event.creator.toString();
+    if (!config.trackedCreators.includes(creatorStr)) return;
+
+    const launch = {
+      creatorAddress: creatorStr,
+      mint: event.mint.toString(),
+      name: event.name,
+      symbol: event.symbol,
+      detectedAt: Date.now(),
+    };
+    const id = insertCreatorLaunch(launch);
+    logger.info({ creator: creatorStr, mint: launch.mint, name: launch.name, symbol: launch.symbol }, 'Tracked creator launched a new token');
+    broadcast('creator.launch', { ...launch, id });
+  }
 
   async function handlePumpFunCreation(event: PumpFunCreateEvent) {
     const { config, versionId } = getActiveConfig();

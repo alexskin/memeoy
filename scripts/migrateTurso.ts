@@ -158,6 +158,15 @@ const STATEMENTS = [
     suggested_max_hold_minutes REAL NOT NULL
   )`,
   `CREATE INDEX IF NOT EXISTS idx_wallet_alerts_detected_at ON wallet_alerts(detected_at)`,
+  `CREATE TABLE IF NOT EXISTS creator_launches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    creator_address TEXT NOT NULL,
+    mint TEXT NOT NULL,
+    name TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    detected_at INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_creator_launches_detected_at ON creator_launches(detected_at)`,
   `CREATE TABLE IF NOT EXISTS partial_exits (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     position_id INTEGER NOT NULL REFERENCES positions(id),
