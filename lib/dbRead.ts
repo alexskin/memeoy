@@ -22,6 +22,7 @@
 // correct unchanged against either source) - see lib/sync/tursoSync.ts for
 // what actually populates the Turso side.
 import { createClient, type Client } from '@libsql/client';
+import { unstable_noStore as noStore } from 'next/cache';
 import * as localDb from './db';
 import {
   AgentDecision,
@@ -53,6 +54,17 @@ function getTursoClient(): Client {
 }
 
 async function tursoRows(sql: string, args: unknown[] = []): Promise<any[]> {
+  // @libsql/client's HTTP transport calls fetch() under the hood, which
+  // Next.js's Data Cache can memoize and persist ACROSS deployments (it's
+  // backed by Vercel's own cache infra, not deployment-local) - confirmed
+  // live: an early request against a not-yet-migrated Turso DB got its
+  // "no such table" response cached, and kept being served on every
+  // subsequent request for hours across several new deploys, for every
+  // table except the ones that happened to be queried successfully before
+  // the bad response got cached. noStore() opts every Turso read out of
+  // that cache - `export const dynamic = 'force-dynamic'` on the route
+  // handlers alone did not reliably stop it for this nested fetch.
+  noStore();
   const result = await getTursoClient().execute({ sql, args: args as any[] });
   return result.rows as any[];
 }
