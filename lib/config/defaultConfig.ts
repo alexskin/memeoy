@@ -26,6 +26,9 @@ export const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
   trailingActivationPct: 40, // start trailing once a trade would have hit the old fixed target
   trailingStopPct: 15, // exit once P&L pulls back 15 percentage-points from its peak
 
+  aiExitReviewEnabled: true,
+  aiExitReviewIntervalMs: 60_000, // token-conscious - well below priceCheckIntervalMs's 2s tick
+
   filterCheckIntervalMs: 2000,
   filterCheckDurationMs: 60_000,
   consecutiveFilterMatches: 3,

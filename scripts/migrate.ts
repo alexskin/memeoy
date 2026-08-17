@@ -234,6 +234,9 @@ export function migrate(db: Database.Database) {
   addColumnIfMissing(db, 'positions', 'token_name', `token_name TEXT`);
   addColumnIfMissing(db, 'positions', 'entry_market_cap_usd', `entry_market_cap_usd REAL`);
   addColumnIfMissing(db, 'positions', 'exit_market_cap_usd', `exit_market_cap_usd REAL`);
+
+  // AI exit review (lib/agent/exitDecisionEngine.ts) - set only when status = 'closed_ai_exit'.
+  addColumnIfMissing(db, 'positions', 'ai_exit_reasoning', `ai_exit_reasoning TEXT`);
 }
 
 function columnExists(db: Database.Database, table: string, columnName: string): boolean {

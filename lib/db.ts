@@ -607,12 +607,14 @@ export function insertPosition(position: Omit<Position, 'id'>): number {
        (detected_pool_id, base_mint, status, entry_fill_id, exit_fill_id, quote_size_in, base_amount_held,
         entry_price, exit_price, take_profit_pct_snapshot, stop_loss_pct_snapshot, realized_pnl_quote,
         realized_pnl_pct, opened_at, closed_at, config_version_id, source, peak_profit_pct,
-        original_quote_size_in, original_base_amount_held, token_name, entry_market_cap_usd, exit_market_cap_usd)
+        original_quote_size_in, original_base_amount_held, token_name, entry_market_cap_usd, exit_market_cap_usd,
+        ai_exit_reasoning)
        VALUES
        (@detectedPoolId, @baseMint, @status, @entryFillId, @exitFillId, @quoteSizeIn, @baseAmountHeld,
         @entryPrice, @exitPrice, @takeProfitPctSnapshot, @stopLossPctSnapshot, @realizedPnlQuote,
         @realizedPnlPct, @openedAt, @closedAt, @configVersionId, @source, @peakProfitPct,
-        @originalQuoteSizeIn, @originalBaseAmountHeld, @tokenName, @entryMarketCapUsd, @exitMarketCapUsd)`,
+        @originalQuoteSizeIn, @originalBaseAmountHeld, @tokenName, @entryMarketCapUsd, @exitMarketCapUsd,
+        @aiExitReasoning)`,
     )
     .run(position as any);
   return info.lastInsertRowid as number;
@@ -631,13 +633,14 @@ export function closePosition(
   realizedPnlPct: number,
   closedAt: number,
   exitMarketCapUsd: number | null = null,
+  aiExitReasoning: string | null = null,
 ) {
   getDb()
     .prepare(
-      `UPDATE positions SET status = ?, exit_fill_id = ?, exit_price = ?, realized_pnl_quote = ?, realized_pnl_pct = ?, closed_at = ?, exit_market_cap_usd = ?
+      `UPDATE positions SET status = ?, exit_fill_id = ?, exit_price = ?, realized_pnl_quote = ?, realized_pnl_pct = ?, closed_at = ?, exit_market_cap_usd = ?, ai_exit_reasoning = ?
        WHERE id = ?`,
     )
-    .run(status, exitFillId, exitPrice, realizedPnlQuote, realizedPnlPct, closedAt, exitMarketCapUsd, id);
+    .run(status, exitFillId, exitPrice, realizedPnlQuote, realizedPnlPct, closedAt, exitMarketCapUsd, aiExitReasoning, id);
 }
 
 // Stamps only status/exit_fill_id/exit_price/closed_at (+ exit market cap) -
@@ -738,6 +741,7 @@ export function rowToPosition(row: any): Position {
     tokenName: row.token_name ?? null,
     entryMarketCapUsd: row.entry_market_cap_usd ?? null,
     exitMarketCapUsd: row.exit_market_cap_usd ?? null,
+    aiExitReasoning: row.ai_exit_reasoning ?? null,
   };
 }
 

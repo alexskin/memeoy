@@ -15,6 +15,8 @@ import { getTokensBatch } from '../dexscreener/client';
 import { logger } from '../logger';
 import { withTimeout } from '../solana/withTimeout';
 import { ResolvedRiskParams } from './riskParams';
+import { decideExit } from '../agent/exitDecisionEngine';
+import { summarizeRecentPerformanceBySignal } from '../agent/stats';
 
 const QUOTE_TIMEOUT_MS = 15_000;
 
@@ -60,6 +62,12 @@ export class PositionMonitor {
   private tracked = new Map<number, TrackedPosition>();
   private timer: NodeJS.Timeout | null = null;
   private lastSnapshotAt = 0;
+  // Kept out of TrackedPosition (a caller-constructed shape from
+  // scripts/worker.ts) so wiring in the AI exit review didn't require
+  // touching every track() call site - defaults to the position's openedAt
+  // the first time it's checked, so a fresh position gets its first review
+  // aiExitReviewIntervalMs after opening, not immediately.
+  private lastAiExitReviewAt = new Map<number, number>();
   // Confirmed bug: setInterval doesn't wait for the previous tick() to
   // finish. Under RPC rate-limiting a tick can take far longer than
   // priceCheckIntervalMs, so several ticks were running concurrently, each
@@ -90,6 +98,7 @@ export class PositionMonitor {
 
   untrack(positionId: number) {
     this.tracked.delete(positionId);
+    this.lastAiExitReviewAt.delete(positionId);
   }
 
   trackedCount(): number {
@@ -201,6 +210,39 @@ export class PositionMonitor {
         profitPct,
       });
       return didClose ? 0 : currentValueQuote;
+    }
+
+    if (config.aiExitReviewEnabled) {
+      const lastReview = this.lastAiExitReviewAt.get(position.positionId) ?? position.openedAt;
+      if (now - lastReview >= config.aiExitReviewIntervalMs) {
+        this.lastAiExitReviewAt.set(position.positionId, now);
+        const decision = await decideExit({
+          baseMint: position.baseMint,
+          unrealizedPnlPct: profitPct,
+          peakProfitPct: position.peakProfitPct === PEAK_PROFIT_UNSET ? profitPct : position.peakProfitPct,
+          minutesHeld: (now - position.openedAt) / 60_000,
+          stopLossPct: position.riskParams.stopLossPct,
+          takeProfitPct: position.riskParams.takeProfitPct,
+          recentPerformance: summarizeRecentPerformanceBySignal(),
+        });
+        logger.info(
+          { positionId: position.positionId, baseMint: position.baseMint, action: decision.action, source: decision.source, reasoning: decision.reasoning },
+          'AI exit review',
+        );
+
+        if (decision.action === 'exit') {
+          const didClose = await this.closeNow(
+            position,
+            config,
+            versionId,
+            now,
+            'closed_ai_exit',
+            { markPrice: markQuote.executionPrice, currentValueQuote, profitPct },
+            decision.reasoning,
+          );
+          return didClose ? 0 : currentValueQuote;
+        }
+      }
     }
 
     // Multi-target scaled take-profit: sell a fraction of the ORIGINAL size
@@ -329,6 +371,7 @@ export class PositionMonitor {
     now: number,
     status: Exclude<PositionStatus, 'open'>,
     markInfo?: { markPrice: number; currentValueQuote: number; profitPct: number },
+    aiExitReasoning?: string,
   ): Promise<boolean> {
     const outcome = await simulateSell(position.priceSource, position.baseAmountHeldUi, config, position.positionId, versionId);
 
@@ -365,6 +408,7 @@ export class PositionMonitor {
       config,
       closedAt: now,
       exitMarketCapUsd,
+      aiExitReasoning: aiExitReasoning ?? null,
     });
 
     this.untrack(position.positionId);
@@ -372,6 +416,7 @@ export class PositionMonitor {
       positionId: position.positionId,
       status,
       realizedPnlQuote: netQuoteReceivedUi - position.quoteSizeInUi,
+      aiExitReasoning,
     });
 
     return true;

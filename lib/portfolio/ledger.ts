@@ -108,6 +108,7 @@ export function openPosition(p: OpenPositionParams): number {
     tokenName: p.tokenName ?? null,
     entryMarketCapUsd: p.entryMarketCapUsd ?? null,
     exitMarketCapUsd: null,
+    aiExitReasoning: null,
   });
   setFillPositionId(p.entryFillId, positionId);
 
@@ -129,6 +130,8 @@ export interface ClosePositionParams {
   closedAt: number;
   /** From DexScreener at close time, best-effort - null if unavailable. */
   exitMarketCapUsd?: number | null;
+  /** Set only for status === 'closed_ai_exit' - see lib/agent/exitDecisionEngine.ts. */
+  aiExitReasoning?: string | null;
 }
 
 export function closePositionAndSettle(p: ClosePositionParams) {
@@ -153,6 +156,7 @@ export function closePositionAndSettle(p: ClosePositionParams) {
     cumulativeRealizedPnlPct,
     p.closedAt,
     p.exitMarketCapUsd ?? null,
+    p.aiExitReasoning ?? null,
   );
 
   const balance = getVirtualBalance(p.config);

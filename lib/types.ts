@@ -39,6 +39,18 @@ export interface StrategyConfig {
   trailingActivationPct: number; // used when exitStrategy === 'trailing'
   trailingStopPct: number; // used when exitStrategy === 'trailing'
 
+  // Periodic AI judgment on open positions - "should I still be holding
+  // this, or exit now even though SL/TP haven't fired?" (lib/agent/
+  // exitDecisionEngine.ts). Deliberately does NOT replace stopLossPct above,
+  // which stays a hard, unconditional floor regardless of this setting - a
+  // bad/slow/unavailable AI call should never be able to block a stop-loss.
+  // Runs on its own interval, independent of priceCheckIntervalMs (which is
+  // every 2s by default) - reviewing every tick would be both wasteful
+  // (Anthropic tokens) and pointless (nothing meaningfully new to judge that
+  // fast).
+  aiExitReviewEnabled: boolean;
+  aiExitReviewIntervalMs: number;
+
   // Filters
   filterCheckIntervalMs: number;
   filterCheckDurationMs: number;
@@ -357,7 +369,7 @@ export interface SimulatedFill {
   feeQuote: number;
 }
 
-export type PositionStatus = 'open' | 'closed_tp' | 'closed_sl' | 'closed_timeout' | 'closed_manual';
+export type PositionStatus = 'open' | 'closed_tp' | 'closed_sl' | 'closed_timeout' | 'closed_manual' | 'closed_ai_exit';
 
 // Sentinel meaning "no peak recorded yet" - the first real unrealized P&L
 // reading becomes the peak naturally via Math.max, avoiding a nullable field.
@@ -393,6 +405,8 @@ export interface Position {
   entryMarketCapUsd: number | null;
   /** From DexScreener at the moment the position fully closes - null while still open or if unavailable. */
   exitMarketCapUsd: number | null;
+  /** Set only when status === 'closed_ai_exit' - the AI's stated reason for exiting early. Null otherwise. */
+  aiExitReasoning: string | null;
 }
 
 export interface PartialExit {

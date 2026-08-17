@@ -90,7 +90,8 @@ const STATEMENTS = [
     original_base_amount_held TEXT NOT NULL DEFAULT '0',
     token_name TEXT,
     entry_market_cap_usd REAL,
-    exit_market_cap_usd REAL
+    exit_market_cap_usd REAL,
+    ai_exit_reasoning TEXT
   )`,
   `CREATE INDEX IF NOT EXISTS idx_positions_status ON positions(status)`,
   `CREATE TABLE IF NOT EXISTS equity_snapshots (
@@ -202,6 +203,16 @@ async function main() {
   for (const sql of STATEMENTS) {
     await client.execute(sql);
   }
+
+  // ALTER-forward for a DB that already existed before this column was
+  // added - CREATE TABLE IF NOT EXISTS above is a no-op there. Safe to
+  // re-run: swallows the "duplicate column" error a second run would hit.
+  try {
+    await client.execute(`ALTER TABLE positions ADD COLUMN ai_exit_reasoning TEXT`);
+  } catch (error) {
+    if (!String(error).includes('duplicate column')) throw error;
+  }
+
   console.log(`Turso schema migration complete (${STATEMENTS.length} statements).`);
 }
 
