@@ -27,11 +27,26 @@ export const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
   trailingStopPct: 15, // exit once P&L pulls back 15 percentage-points from its peak
 
   aiExitReviewEnabled: true,
-  aiExitReviewIntervalMs: 60_000, // token-conscious - well below priceCheckIntervalMs's 2s tick
+  // 120s, not 60s - a trigger becoming active (SL/TP/timeout) still forces
+  // an immediate review regardless of this interval (see
+  // positionMonitor.ts's anyTriggerActive check), so this only slows down
+  // the routine "nothing's happening, just checking in" cadence, not safety
+  // reviews. Halves exit-review call volume - cost-conscious per the user's
+  // explicit ask to trim Anthropic spend.
+  aiExitReviewIntervalMs: 120_000,
   aiTimeoutExtensionMs: 600_000, // +10min (half of the 20min default priceCheckDurationMs), one-time only
 
-  filterCheckIntervalMs: 2000,
-  filterCheckDurationMs: 60_000,
+  // 3000ms/45s, not 2000ms/60s - a doomed candidate (mint/freeze authority
+  // never renounced) runs this whole loop to exhaustion, one Helius RPC call
+  // per iteration: filterCheckDurationMs/filterCheckIntervalMs = up to 15
+  // calls now, down from 30. Most detected pools never pass this loop (the
+  // large majority get rejected here), so this is the single biggest Helius
+  // cost lever available without restructuring the detection pipeline -
+  // still leaves 45s for a dev to renounce shortly after launch, which is
+  // when it typically happens if it happens at all. Cost-conscious per the
+  // user's explicit ask to trim Helius spend.
+  filterCheckIntervalMs: 3000,
+  filterCheckDurationMs: 45_000,
   consecutiveFilterMatches: 3,
   checkRenounced: true,
   checkFreezable: false,

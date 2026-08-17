@@ -45,10 +45,14 @@ export default function Page() {
   const [controlState, setControlState] = useState<WorkerControlState>('running');
 
   const refreshAll = useCallback(async () => {
+    // Smaller page sizes on the public read-only deployment too - fewer
+    // rows means less of app/api/pools's per-row Turso fan-out per request.
+    const poolsLimit = READ_ONLY ? 40 : 100;
+    const decisionsLimit = READ_ONLY ? 25 : 50;
     const [poolsRes, decisionsRes, positionsRes, tradesRes, equityRes, configRes, historyRes, suggestionsRes, healthRes, controlRes, walletAlertsRes] =
       await Promise.all([
-        fetch('/api/pools').then((r) => r.json()),
-        fetch('/api/decisions?limit=50').then((r) => r.json()),
+        fetch(`/api/pools?limit=${poolsLimit}`).then((r) => r.json()),
+        fetch(`/api/decisions?limit=${decisionsLimit}`).then((r) => r.json()),
         fetch('/api/positions').then((r) => r.json()),
         fetch('/api/trades').then((r) => r.json()),
         fetch('/api/equity').then((r) => r.json()),
@@ -75,7 +79,12 @@ export default function Page() {
 
   useEffect(() => {
     refreshAll();
-    const interval = setInterval(refreshAll, 30_000);
+    // READ_ONLY (the public Vercel deployment) polls slower - freshness
+    // matters less for a public view than for the local operator dashboard,
+    // and every tick here is real Vercel function invocations against Turso
+    // that count toward the monthly usage budget. Cost-conscious per the
+    // user's explicit ask to trim Vercel spend.
+    const interval = setInterval(refreshAll, READ_ONLY ? 90_000 : 30_000);
     return () => clearInterval(interval);
   }, [refreshAll]);
 

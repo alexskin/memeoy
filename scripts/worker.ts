@@ -587,7 +587,7 @@ async function main() {
   });
 
   async function handlePumpSwapPool(pool: PumpSwapPool) {
-    const { config } = getActiveConfig();
+    const { config, versionId } = getActiveConfig();
 
     // Base decimals aren't on the Pool struct - one cheap mint-account read,
     // same MintLayout technique already proven in holderConcentrationFilter.ts
@@ -619,6 +619,51 @@ async function main() {
       detectedAt: Date.now(),
       source: 'pumpswap',
     });
+
+    // Cheap early-out, BEFORE the safety-filter loop and holder/insider
+    // concentration checks below (checkHolderConcentration's Token-2022
+    // fallback in particular can be a large getProgramAccounts scan, and the
+    // filter loop can run up to filterCheckDurationMs/filterCheckIntervalMs
+    // RPC calls for a candidate that never resolves) - PumpSwapFilters has
+    // no pool-size gate of its own (unlike Raydium's PoolFilters), so
+    // without this, every candidate paid that full RPC cost regardless of
+    // how obviously tiny/dead its liquidity was. One getTokenAccountBalance
+    // call on the pool's own quote vault (already known from the decoded
+    // Pool account) - quote is always native SOL here, so
+    // minPoolSizeQuote/maxPoolSizeQuote compare directly against uiAmount,
+    // same thresholds Raydium's PoolSizeFilter already uses. Still records a
+    // real detected_pools row + a 'poolSize' filter_results rejection first
+    // (same as every other rejection path) so lib/agent/runnerReview.ts's
+    // history stays complete - only the expensive downstream checks are
+    // skipped. Helius-cost-conscious per the user's explicit ask to trim RPC
+    // spend.
+    if (config.minPoolSizeQuote > 0 || config.maxPoolSizeQuote > 0) {
+      updatePoolStatus(detectedPoolId, 'filtering');
+      try {
+        const quoteBalance = await connection.getTokenAccountBalance(pool.poolQuoteTokenAccount);
+        const poolSizeUi = quoteBalance.value.uiAmount ?? 0;
+        const tooSmall = config.minPoolSizeQuote > 0 && poolSizeUi < config.minPoolSizeQuote;
+        const tooBig = config.maxPoolSizeQuote > 0 && poolSizeUi > config.maxPoolSizeQuote;
+        if (tooSmall || tooBig) {
+          const message = `PoolSize -> ${poolSizeUi.toFixed(3)} SOL ${tooSmall ? `< ${config.minPoolSizeQuote}` : `> ${config.maxPoolSizeQuote}`}`;
+          insertFilterResult({
+            detectedPoolId,
+            filterName: 'poolSize',
+            pass: false,
+            message,
+            attemptNumber: 1,
+            configVersionId: versionId,
+            checkedAt: Date.now(),
+          });
+          broadcast('filter.result', { detectedPoolId, filterName: 'poolSize', pass: false, message });
+          updatePoolStatus(detectedPoolId, 'rejected');
+          broadcast('pool.status', { id: detectedPoolId, status: 'rejected' });
+          return;
+        }
+      } catch (error) {
+        logger.debug({ baseMint: pool.baseMint.toString(), error: String(error) }, 'PumpSwap: pool size check failed, proceeding anyway');
+      }
+    }
 
     const pumpSwapFilters = new PumpSwapFilters(connection, config);
 

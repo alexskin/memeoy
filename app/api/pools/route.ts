@@ -12,12 +12,20 @@ export async function GET(request: Request) {
   // from this one endpoint - same N+1-per-row pattern this route already
   // used for filterResults, `limit` keeps it bounded.
   const enriched = await Promise.all(
-    pools.map(async (pool) => ({
-      ...pool,
-      filterResults: await getPoolFilterResults(pool.id),
-      latestMomentumSnapshot: await getLatestMomentumSnapshot(pool.id),
-      latestAgentDecision: await getLatestAgentDecisionForPool(pool.id),
-    })),
+    pools.map(async (pool) => {
+      // The 3 sub-fetches are independent (different tables, same pool.id) -
+      // run them concurrently instead of sequentially. Each is a real
+      // network round trip against Turso in the hosted read-only deployment
+      // (lib/dbRead.ts), so this cuts this route's wall-clock duration to
+      // roughly 1/3 - Vercel's Fluid compute bills provisioned duration, not
+      // just CPU time, so a slow N+1 fan-out here directly inflates cost.
+      const [filterResults, latestMomentumSnapshot, latestAgentDecision] = await Promise.all([
+        getPoolFilterResults(pool.id),
+        getLatestMomentumSnapshot(pool.id),
+        getLatestAgentDecisionForPool(pool.id),
+      ]);
+      return { ...pool, filterResults, latestMomentumSnapshot, latestAgentDecision };
+    }),
   );
   return NextResponse.json({ pools: enriched });
 }

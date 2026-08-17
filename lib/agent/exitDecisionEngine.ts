@@ -16,9 +16,13 @@ import { logger } from '../logger';
 const LLM_TIMEOUT_MS = 15000;
 // A single flaky call shouldn't silently demote a real exit judgment to the
 // fallback path (which, per the invariant above, always reverts to closing
-// on whatever trigger is active) - retry several times before actually
-// falling back.
-const MAX_ATTEMPTS = 5;
+// on whatever trigger is active) - retry once before actually falling back.
+// Kept lower than decisionEngine.ts's 5 deliberately: unlike a missed buy,
+// giving up here is never unsafe (the fallback always closes on the active
+// trigger), and this call fires far more often (every open position, every
+// review interval) - cost-conscious per the user's explicit ask to trim
+// Anthropic spend.
+const MAX_ATTEMPTS = 2;
 
 export interface ExitDecisionInput {
   baseMint: string;

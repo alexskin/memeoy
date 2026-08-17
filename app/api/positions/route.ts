@@ -6,10 +6,13 @@ export const dynamic = 'force-dynamic';
 export async function GET() {
   const positions = await Promise.all(
     (await getOpenPositions()).map(async (p) => {
-      const decision = await getLatestAgentDecisionBeforeBuy(p.detectedPoolId, p.openedAt);
+      const [decision, partialExits] = await Promise.all([
+        getLatestAgentDecisionBeforeBuy(p.detectedPoolId, p.openedAt),
+        getPartialExitsForPosition(p.id),
+      ]);
       return {
         ...p,
-        partialExits: await getPartialExitsForPosition(p.id),
+        partialExits,
         entryReasoning: decision?.reasoning ?? null,
         entrySource: decision?.source ?? null,
       };

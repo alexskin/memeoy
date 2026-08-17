@@ -88,7 +88,13 @@ export async function getDegenScore(link: string | null): Promise<DegenScoreResu
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-5',
+        // Haiku, not Sonnet - this is a coarse "does this look organic"
+        // vibe check that only ever feeds decisionEngine.ts as advisory
+        // context (never a hard buy/skip gate on its own), and it's called
+        // for every candidate that clears momentum/revival, several times
+        // an hour. Cost-conscious per the user's explicit ask; revisit if
+        // score quality turns out to matter more than expected.
+        model: 'claude-haiku-4-5-20251001',
         max_tokens: 150,
         system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content: userPrompt }],
