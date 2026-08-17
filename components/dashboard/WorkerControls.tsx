@@ -29,10 +29,12 @@ export function WorkerControls({
     action: 'pause' | 'start' | 'stop' | 'sellAll',
     active: boolean,
     variant?: 'accept' | 'reject',
+    title?: string,
   ) => (
     <button
       className={`action ${variant ?? ''} ${active ? 'active-control' : ''}`}
       disabled={busy !== null}
+      title={title}
       onClick={() => (action === 'sellAll' ? setConfirmSellAll(true) : act(action))}
       style={active ? { outline: '1px solid var(--gold)' } : undefined}
     >
@@ -42,9 +44,9 @@ export function WorkerControls({
 
   return (
     <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-      {btn('PAUSE', 'pause', state === 'paused')}
+      {btn('PAUSE', 'pause', state === 'paused', undefined, 'Stops discovery (chain listeners, watchlist polling, wallet tracker) to save RPC/Helius usage - still manages any open positions')}
       {btn('SELL ALL', 'sellAll', false, 'reject')}
-      {btn('STOP', 'stop', state === 'stopped', 'reject')}
+      {btn('STOP', 'stop', state === 'stopped', 'reject', 'Full halt - also stops managing open positions')}
       {btn('START', 'start', state === 'running', 'accept')}
 
       {confirmSellAll && (

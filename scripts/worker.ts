@@ -765,19 +765,27 @@ async function main() {
   });
 
   // ---- start everything (unless a previous run left it STOPPED) ----
+  //
+  // Split into two independently-lifecycled halves, because PAUSE and STOP
+  // now mean different things: PAUSE stops everything that *discovers* new
+  // work (chain listeners, watchlist/premigration polling, the wallet
+  // tracker's Helius Enhanced-Transactions polling) - the part that
+  // actually burns RPC/Helius credits continuously - while STILL managing
+  // any already-open positions (their stop-loss/take-profit still needs to
+  // run; this is paper trading so the "risk" of pausing that too would only
+  // ever be simulated P&L, but there's no reason to give that up for free).
+  // STOP additionally halts position management too - the harder, full halt.
 
-  async function startWatching() {
+  async function startDiscovery() {
     lastPoolEventAt = Date.now(); // avoid an immediate false-positive stale reading before the first post-(re)start event arrives
     await listeners.start({ quoteToken, cacheNewMarkets: CACHE_NEW_MARKETS });
     pumpFunListener.start(COMMITMENT_LEVEL);
-    positionMonitor.start();
     watchlistMonitor.start();
     premigrationWatchlistMonitor.start();
     walletWatcher.start();
   }
 
-  async function stopWatching() {
-    positionMonitor.stop();
+  async function stopDiscovery() {
     watchlistMonitor.stop();
     premigrationWatchlistMonitor.stop();
     walletWatcher.stop();
@@ -788,7 +796,12 @@ async function main() {
   if (workerState === 'stopped') {
     logger.warn({}, 'Starting in STOPPED state (persisted from a previous run) - not watching the chain. Use START on the dashboard to resume.');
   } else {
-    await startWatching();
+    positionMonitor.start();
+    if (workerState === 'running') {
+      await startDiscovery();
+    } else {
+      logger.warn({}, 'Starting in PAUSED state (persisted from a previous run) - managing existing positions only, not discovering new pools/wallets. Use START on the dashboard to resume discovery.');
+    }
   }
 
   // ---- config hot-reload poll ----
@@ -806,15 +819,25 @@ async function main() {
     if (desired !== workerState) {
       try {
         if (desired === 'stopped') {
-          await stopWatching();
+          if (workerState === 'running') await stopDiscovery();
+          positionMonitor.stop();
           logger.info({}, 'Worker STOPPED via dashboard control');
         } else if (desired === 'running' && workerState === 'stopped') {
-          await startWatching();
+          positionMonitor.start();
+          await startDiscovery();
           logger.info({}, 'Worker STARTED via dashboard control');
-        } else if (desired === 'running') {
-          logger.info({}, 'Worker RESUMED (unpaused) via dashboard control');
+        } else if (desired === 'running' && workerState === 'paused') {
+          await startDiscovery();
+          logger.info({}, 'Worker RESUMED (unpaused) via dashboard control - discovery restarted');
+        } else if (desired === 'paused' && workerState === 'stopped') {
+          // No dashboard button reaches this directly (STOP only leads to
+          // START), but handle it safely in case control state is ever set
+          // this way some other way.
+          positionMonitor.start();
+          logger.info({}, 'Worker PAUSED via dashboard control (from stopped) - managing existing positions only');
         } else if (desired === 'paused') {
-          logger.info({}, 'Worker PAUSED via dashboard control (buying paused, still watching)');
+          await stopDiscovery();
+          logger.info({}, 'Worker PAUSED via dashboard control - discovery stopped (saves RPC/Helius usage), still managing open positions');
         }
         workerState = desired;
         broadcast('worker.state', { state: workerState });
@@ -902,7 +925,8 @@ async function main() {
 
   process.on('SIGINT', async () => {
     logger.info({}, 'Shutting down...');
-    await stopWatching();
+    positionMonitor.stop();
+    await stopDiscovery();
     wsServer.close();
     process.exit(0);
   });

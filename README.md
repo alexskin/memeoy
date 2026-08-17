@@ -58,7 +58,7 @@ The dashboard has four tabs:
 - **Strategy** — the live strategy configuration (editable, saved as a new version every time) and the self-tuning agent's proposed changes, which you accept or reject.
 - **Wallet Alerts** — add any Solana wallet address to get an advisory notification whenever it buys something, with a suggested stop-loss/target framework. This never opens a position on its own.
 
-The header has four controls: **PAUSE** (stop opening new positions, keep managing open ones), **STOP** (fully unsubscribe from the chain — a harder halt), **START** (resume), and **SELL ALL** (force-close every open position right now, with a confirmation step).
+The header has four controls: **PAUSE** (stops discovery — chain listeners, watchlist/premigration polling, the wallet tracker — to save RPC/Helius usage, while still managing any already-open positions), **STOP** (also stops managing open positions — a full halt), **START** (resume), and **SELL ALL** (force-close every open position right now, with a confirmation step).
 
 ## Run paper mode first
 
