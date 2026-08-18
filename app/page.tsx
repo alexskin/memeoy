@@ -259,9 +259,11 @@ export default function Page() {
   return (
     <div className="wrap">
       <div className="header">
-        <div>
-          <div className="eyebrow">Paper trading · no real funds</div>
-          <h1 className="title">Memeoy</h1>
+        <div className="brand">
+          <div>
+            <div className="eyebrow">Paper trading · no real funds</div>
+            <h1 className="title">Memeoy</h1>
+          </div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 10 }}>
           <a href="https://github.com/alexskin/memeoy" target="_blank" rel="noopener noreferrer" className="action">
