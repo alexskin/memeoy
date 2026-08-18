@@ -21,6 +21,7 @@ import { resolveRiskParams } from './riskParams';
 
 const BALANCE_KEY = 'virtual_balance_quote';
 const REALIZED_PNL_KEY = 'realized_pnl_cumulative';
+const WIN_STREAK_KEY = 'progressive_win_streak';
 
 export function getVirtualBalance(config: StrategyConfig): number {
   const raw = getMeta(BALANCE_KEY);
@@ -44,8 +45,32 @@ function addRealizedPnl(delta: number) {
   setMeta(REALIZED_PNL_KEY, String(getRealizedPnlCumulative() + delta));
 }
 
+export function getWinStreak(): number {
+  const raw = getMeta(WIN_STREAK_KEY);
+  return raw === null ? 0 : Number(raw);
+}
+
+// A closed leg counts toward the streak only if it made money AND wasn't
+// forced out by the stop-loss - a position that got stopped out but still
+// closed net-positive overall (e.g. after an earlier partial take-profit)
+// still breaks the streak, since the stop-loss firing means the entry
+// thesis broke, independent of the running total. Called once per position
+// close (lib/portfolio/ledger.ts's closePositionAndSettle/
+// finalizeFullyLiquidated), never per partial-exit leg - only the position's
+// FINAL close should move the streak.
+function updateWinStreak(status: PositionStatus, realizedPnlQuote: number) {
+  const qualifies = status !== 'closed_sl' && realizedPnlQuote > 0;
+  setMeta(WIN_STREAK_KEY, String(qualifies ? getWinStreak() + 1 : 0));
+}
+
 export function positionSizeQuote(config: StrategyConfig, balance: number): number {
-  return config.positionSizeMode === 'fixed' ? config.positionSizeValue : balance * config.positionSizeValue;
+  const base = config.positionSizeMode === 'fixed' ? config.positionSizeValue : balance * config.positionSizeValue;
+  if (!config.progressiveSizingEnabled) return base;
+
+  const qualifies =
+    getWinStreak() >= config.progressiveSizingWinStreakRequired &&
+    getRealizedPnlCumulative() >= config.progressiveSizingMinRealizedProfitQuote;
+  return qualifies ? base * config.progressiveSizingScaleFactor : base;
 }
 
 export function canOpenPosition(config: StrategyConfig, baseMint: string): boolean {
@@ -169,6 +194,7 @@ export function closePositionAndSettle(p: ClosePositionParams) {
   const balance = getVirtualBalance(p.config);
   setVirtualBalance(balance + p.quoteReceivedUi);
   addRealizedPnl(legPnlQuote);
+  updateWinStreak(p.status, cumulativeRealizedPnlQuote);
 }
 
 export interface RecordPartialExitParams {
@@ -246,6 +272,8 @@ export function finalizeFullyLiquidated(
   exitMarketCapUsd: number | null = null,
 ) {
   finalizePosition(positionId, status, exitFillId, exitPrice, closedAt, exitMarketCapUsd);
+  const position = getPositionById(positionId);
+  updateWinStreak(status, position?.realizedPnlQuote ?? 0);
 }
 
 // Called periodically (and on every open/close) so the equity curve stays

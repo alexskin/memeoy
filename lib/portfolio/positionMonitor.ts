@@ -79,6 +79,7 @@ export class PositionMonitor {
   private timeoutExtendCount = new Map<number, number>();
   private rodePastStopLossCount = new Map<number, number>();
   private rodePastTakeProfitCount = new Map<number, number>();
+  private rodePastStructuralBreakCount = new Map<number, number>();
   // Confirmed bug: setInterval doesn't wait for the previous tick() to
   // finish. Under RPC rate-limiting a tick can take far longer than
   // priceCheckIntervalMs, so several ticks were running concurrently, each
@@ -114,6 +115,7 @@ export class PositionMonitor {
     this.timeoutExtendCount.delete(positionId);
     this.rodePastStopLossCount.delete(positionId);
     this.rodePastTakeProfitCount.delete(positionId);
+    this.rodePastStructuralBreakCount.delete(positionId);
   }
 
   trackedCount(): number {
@@ -151,7 +153,7 @@ export class PositionMonitor {
       // failure just means every position's momentum context is null this
       // tick, not a tick failure (decideExit treats null as "unavailable").
       let momentumByMint = new Map<string, DexScreenerPair | null>();
-      if (config.aiExitReviewEnabled && trackedPositions.length > 0) {
+      if ((config.aiExitReviewEnabled || config.structuralExitEnabled) && trackedPositions.length > 0) {
         try {
           momentumByMint = await getTokensBatch('solana', trackedPositions.map((p) => p.baseMint));
         } catch (error) {
@@ -258,6 +260,16 @@ export class PositionMonitor {
 
     const hitStopLoss = profitPct <= -position.riskParams.stopLossPct;
 
+    // Structural break: the token's own live activity has collapsed below
+    // the floors that justified opening the position in the first place,
+    // independent of current price P&L. Only evaluated when momentum data
+    // is actually available this tick - missing data means "can't verify",
+    // never "assume broken".
+    const hitStructuralBreak =
+      config.structuralExitEnabled &&
+      momentum !== null &&
+      ((momentum.volume.m5 ?? 0) < config.structuralExitMinVolume5mUsd || (momentum.txns.h1?.buys ?? 0) < config.structuralExitMinBuys1h);
+
     // The deadline starts at openedAt + priceCheckDurationMs and can be
     // pushed out repeatedly by real AI judgments below - absent from the
     // override map means "never extended yet".
@@ -285,6 +297,10 @@ export class PositionMonitor {
         const didClose = await this.closeNow(position, config, versionId, now, status, { markPrice: markQuote.executionPrice, currentValueQuote, profitPct });
         return didClose ? 0 : currentValueQuote;
       }
+      if (hitStructuralBreak) {
+        const didClose = await this.closeNow(position, config, versionId, now, 'closed_structural', { markPrice: markQuote.executionPrice, currentValueQuote, profitPct });
+        return didClose ? 0 : currentValueQuote;
+      }
       if (hitTakeProfit) {
         const didClose = await this.closeNow(position, config, versionId, now, 'closed_tp', { markPrice: markQuote.executionPrice, currentValueQuote, profitPct });
         return didClose ? 0 : currentValueQuote;
@@ -295,9 +311,10 @@ export class PositionMonitor {
 
     // AI-driven path. Any trigger becoming active forces an immediate
     // review instead of waiting up to aiExitReviewIntervalMs to ask about a
-    // fresh stop-loss/take-profit/timeout hit; otherwise reviews stay on
-    // the normal cadence (token-conscious - not every 1s price tick).
-    const anyTriggerActive = hitStopLoss || hitTakeProfit || hitTimeout;
+    // fresh stop-loss/take-profit/timeout/structural-break hit; otherwise
+    // reviews stay on the normal cadence (token-conscious - not every 1s
+    // price tick).
+    const anyTriggerActive = hitStopLoss || hitTakeProfit || hitTimeout || hitStructuralBreak;
     const lastReview = this.lastAiExitReviewAt.get(position.positionId) ?? position.openedAt;
     const reviewDue = anyTriggerActive || now - lastReview >= config.aiExitReviewIntervalMs;
 
@@ -309,6 +326,7 @@ export class PositionMonitor {
 
     const slRideCount = this.rodePastStopLossCount.get(position.positionId) ?? 0;
     const tpRideCount = this.rodePastTakeProfitCount.get(position.positionId) ?? 0;
+    const structuralRideCount = this.rodePastStructuralBreakCount.get(position.positionId) ?? 0;
     const extendCount = this.timeoutExtendCount.get(position.positionId) ?? 0;
 
     const decision = await decideExit({
@@ -321,6 +339,7 @@ export class PositionMonitor {
       recentPerformance: summarizeRecentPerformanceBySignal(),
       recentBuys5m: momentum?.txns.m5?.buys ?? null,
       recentBuys1h: momentum?.txns.h1?.buys ?? null,
+      volume5mUsd: momentum?.volume.m5 ?? null,
       volume24hUsd: momentum?.volume.h24 ?? null,
       priceChange1hPct: momentum?.priceChange.h1 ?? null,
       stopLossReached: hitStopLoss,
@@ -329,9 +348,11 @@ export class PositionMonitor {
       timesRodePastTakeProfit: tpRideCount,
       timeoutReached: hitTimeout,
       timesAlreadyExtended: extendCount,
+      structuralBreakReached: hitStructuralBreak,
+      timesRodePastStructuralBreak: structuralRideCount,
     });
     logger.info(
-      { positionId: position.positionId, baseMint: position.baseMint, action: decision.action, source: decision.source, reasoning: decision.reasoning, hitStopLoss, hitTakeProfit, hitTimeout },
+      { positionId: position.positionId, baseMint: position.baseMint, action: decision.action, source: decision.source, reasoning: decision.reasoning, hitStopLoss, hitTakeProfit, hitTimeout, hitStructuralBreak },
       'AI exit review',
     );
 
@@ -344,7 +365,15 @@ export class PositionMonitor {
     // first. A voluntary exit with no trigger active (plain early-exit
     // check) falls through to closed_ai_exit.
     if (decision.action === 'exit' || (anyTriggerActive && !isRealJudgment)) {
-      const status: Exclude<PositionStatus, 'open'> = hitStopLoss ? 'closed_sl' : hitTimeout ? 'closed_timeout' : hitTakeProfit ? 'closed_tp' : 'closed_ai_exit';
+      const status: Exclude<PositionStatus, 'open'> = hitStopLoss
+        ? 'closed_sl'
+        : hitTimeout
+          ? 'closed_timeout'
+          : hitStructuralBreak
+            ? 'closed_structural'
+            : hitTakeProfit
+              ? 'closed_tp'
+              : 'closed_ai_exit';
       const didClose = await this.closeNow(
         position,
         config,
@@ -363,6 +392,10 @@ export class PositionMonitor {
       if (hitStopLoss) {
         this.rodePastStopLossCount.set(position.positionId, slRideCount + 1);
         logger.info({ positionId: position.positionId, baseMint: position.baseMint, count: slRideCount + 1 }, 'AI rode past stop-loss');
+      }
+      if (hitStructuralBreak) {
+        this.rodePastStructuralBreakCount.set(position.positionId, structuralRideCount + 1);
+        logger.info({ positionId: position.positionId, baseMint: position.baseMint, count: structuralRideCount + 1 }, 'AI rode past structural break');
       }
       if (hitTakeProfit) {
         this.rodePastTakeProfitCount.set(position.positionId, tpRideCount + 1);

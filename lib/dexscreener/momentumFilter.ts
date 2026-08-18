@@ -35,6 +35,7 @@ export function evaluateMomentum(
   const liquidity = pair.liquidity?.usd ?? 0;
   const vol24h = pair.volume.h24 ?? 0;
   const buys1h = pair.txns.h1?.buys ?? 0;
+  const sells1h = pair.txns.h1?.sells ?? 0;
   const buys5m = pair.txns.m5?.buys ?? 0;
   const chg24h = pair.priceChange.h24 ?? 0;
   const chg1h = pair.priceChange.h1 ?? 0;
@@ -49,6 +50,11 @@ export function evaluateMomentum(
     { criterionName: 'min24hChange', ok: chg24h >= config.momentumMin24hChangePct, message: `24h chg ${chg24h.toFixed(1)}% (need >= ${config.momentumMin24hChangePct}%)` },
     { criterionName: 'max24hChange', ok: chg24h <= config.momentumMax24hChangePct, message: `24h chg ${chg24h.toFixed(1)}% (must be <= ${config.momentumMax24hChangePct}%)` },
     { criterionName: 'min1hChange', ok: chg1h >= config.momentumMin1hChangePct, message: `1h chg ${chg1h.toFixed(1)}% (need >= ${config.momentumMin1hChangePct}%)` },
+    {
+      criterionName: 'twoSidedTape',
+      ok: sells1h >= config.momentumMinSells1h && buys1h > sells1h,
+      message: `1h buys ${buys1h} / sells ${sells1h} (need >= ${config.momentumMinSells1h} sells and buys > sells)`,
+    },
   ];
 
   return { pass: results.every((r) => r.ok), hasData: true, pairAgeMinutes: ageMinutes, results };

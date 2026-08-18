@@ -14,6 +14,7 @@ const STATUS_LABEL: Record<string, string> = {
   closed_timeout: 'timeout',
   closed_manual: 'manual',
   closed_ai_exit: 'AI exit',
+  closed_structural: 'structure break',
 };
 
 function formatMc(mc: number | null): string {

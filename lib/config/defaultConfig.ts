@@ -12,6 +12,11 @@ export const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
   maxBuyRetries: 10,
   buySlippagePct: 20,
 
+  progressiveSizingEnabled: true,
+  progressiveSizingWinStreakRequired: 3,
+  progressiveSizingMinRealizedProfitQuote: 0.5,
+  progressiveSizingScaleFactor: 1.5,
+
   autoSellDelayMs: 0,
   maxSellRetries: 10,
   sellSlippagePct: 20,
@@ -25,6 +30,10 @@ export const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
   takeProfitPct: 40,
   trailingActivationPct: 40, // start trailing once a trade would have hit the old fixed target
   trailingStopPct: 15, // exit once P&L pulls back 15 percentage-points from its peak
+
+  structuralExitEnabled: true,
+  structuralExitMinVolume5mUsd: 500,
+  structuralExitMinBuys1h: 3,
 
   aiExitReviewEnabled: true,
   // 120s, not 60s - a trigger becoming active (SL/TP/timeout) still forces
@@ -98,6 +107,7 @@ export const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
   // blocked every one).
   momentumMax24hChangePct: 1_000_000,
   momentumMin1hChangePct: -20,
+  momentumMinSells1h: 2,
   momentumPollIntervalMs: 20_000,
   // Was 300 - live-checked 2026-08-18: the watchlist was CHRONICALLY at
   // capacity (300/300 pools in 'watching' status) with every ~20s tick

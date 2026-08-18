@@ -70,7 +70,7 @@ export interface RunnerReviewStats {
   avgEntryAgeMinutesNonRunners: number;
   filterPassRates: FilterPassRateStat[];
   boughtRunnerCount: number;
-  boughtRunnerEarlyExitCount: number; // closed_sl or closed_timeout
+  boughtRunnerEarlyExitCount: number; // closed_sl, closed_timeout, or closed_structural
   boughtRunnerGoodExitCount: number; // closed_tp or closed_ai_exit
   degenBuckets: DegenBucketStat[];
 }
@@ -188,7 +188,7 @@ export async function computeRunnerReviewStats(config: StrategyConfig): Promise<
 
   const boughtRunners = runners.filter((c) => c.position && c.position.status !== 'open');
   const boughtRunnerEarlyExitCount = boughtRunners.filter(
-    (c) => c.position!.status === 'closed_sl' || c.position!.status === 'closed_timeout',
+    (c) => c.position!.status === 'closed_sl' || c.position!.status === 'closed_timeout' || c.position!.status === 'closed_structural',
   ).length;
   const boughtRunnerGoodExitCount = boughtRunners.filter(
     (c) => c.position!.status === 'closed_tp' || c.position!.status === 'closed_ai_exit',

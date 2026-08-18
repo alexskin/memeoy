@@ -6,6 +6,10 @@ const EDITABLE_FIELDS: { key: keyof StrategyConfig; label: string; type: 'number
   { key: 'tradingMode', label: 'Trading mode (paper = simulated, live = real funds)', type: 'select' },
   { key: 'positionSizeMode', label: 'Position size mode', type: 'select' },
   { key: 'positionSizeValue', label: 'Position size value', type: 'number' },
+  { key: 'progressiveSizingEnabled', label: 'Progressive sizing enabled', type: 'select' },
+  { key: 'progressiveSizingWinStreakRequired', label: 'Progressive: win streak required', type: 'number' },
+  { key: 'progressiveSizingMinRealizedProfitQuote', label: 'Progressive: min realized profit (quote)', type: 'number' },
+  { key: 'progressiveSizingScaleFactor', label: 'Progressive: scale factor', type: 'number' },
   { key: 'buySlippagePct', label: 'Buy slippage %', type: 'number' },
   { key: 'sellSlippagePct', label: 'Sell slippage %', type: 'number' },
   { key: 'exitStrategy', label: 'Exit strategy', type: 'select' },
@@ -13,6 +17,9 @@ const EDITABLE_FIELDS: { key: keyof StrategyConfig; label: string; type: 'number
   { key: 'trailingActivationPct', label: 'Trailing activation %', type: 'number' },
   { key: 'trailingStopPct', label: 'Trailing stop (pts from peak)', type: 'number' },
   { key: 'stopLossPct', label: 'Stop loss % (hard floor)', type: 'number' },
+  { key: 'structuralExitEnabled', label: 'Structural exit enabled', type: 'select' },
+  { key: 'structuralExitMinVolume5mUsd', label: 'Structural exit: min 5m volume ($)', type: 'number' },
+  { key: 'structuralExitMinBuys1h', label: 'Structural exit: min 1h buys', type: 'number' },
   { key: 'minPoolSizeQuote', label: 'Min pool size (quote)', type: 'number' },
   { key: 'maxPoolSizeQuote', label: 'Max pool size (quote)', type: 'number' },
   { key: 'consecutiveFilterMatches', label: 'Consecutive filter matches', type: 'number' },
@@ -31,6 +38,7 @@ const EDITABLE_FIELDS: { key: keyof StrategyConfig; label: string; type: 'number
   { key: 'momentumMin24hChangePct', label: 'Min 24h change %', type: 'number' },
   { key: 'momentumMax24hChangePct', label: 'Max 24h change %', type: 'number' },
   { key: 'momentumMin1hChangePct', label: 'Min 1h change %', type: 'number' },
+  { key: 'momentumMinSells1h', label: 'Min 1h sells (two-sided tape)', type: 'number' },
   { key: 'momentumPollIntervalMs', label: 'Watchlist poll interval (ms)', type: 'number' },
   { key: 'momentumMaxWatchlistSize', label: 'Max watchlist size', type: 'number' },
   { key: 'executionMode', label: 'Execution mode', type: 'select' },
@@ -47,9 +55,17 @@ const SELECT_OPTIONS: Record<string, string[]> = {
   checkHolderConcentration: ['true', 'false'],
   checkInsiderConcentration: ['true', 'false'],
   momentumEnabled: ['true', 'false'],
+  progressiveSizingEnabled: ['true', 'false'],
+  structuralExitEnabled: ['true', 'false'],
 };
 
-const BOOLEAN_FIELDS = new Set(['checkHolderConcentration', 'checkInsiderConcentration', 'momentumEnabled']);
+const BOOLEAN_FIELDS = new Set([
+  'checkHolderConcentration',
+  'checkInsiderConcentration',
+  'momentumEnabled',
+  'progressiveSizingEnabled',
+  'structuralExitEnabled',
+]);
 
 export function StrategyConfigPanel({
   activeVersion,

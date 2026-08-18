@@ -13,9 +13,7 @@
 // substitute for the judgment itself. Every call - buy AND skip - gets
 // persisted (lib/db.ts's insertAgentDecision) with its reasoning, so a
 // "REFUSED" candidate (including an LLM-unavailable one) stays visible
-// with a reason instead of silently vanishing (inspired by omotrades.com's
-// live reasoning feed, which explicitly logs refused setups, not just
-// accepted trades - see the plan's Context section).
+// with a reason instead of silently vanishing.
 import { ANTHROPIC_API_KEY } from '../config/env';
 import { MomentumEvaluation } from '../dexscreener/momentumFilter';
 import { RevivalEvaluation } from '../dexscreener/revivalFilter';

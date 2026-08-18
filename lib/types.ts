@@ -19,6 +19,21 @@ export interface StrategyConfig {
   maxBuyRetries: number;
   buySlippagePct: number;
 
+  // Progressive position sizing - layers on top of positionSizeMode/
+  // positionSizeValue above rather than replacing it. Scales the base size
+  // up by progressiveSizingScaleFactor only once BOTH are true: the last
+  // progressiveSizingWinStreakRequired closed positions were all qualifying
+  // wins (positive realized P&L, and not stopped out - see
+  // lib/portfolio/ledger.ts's updateWinStreak), AND cumulative realized P&L
+  // is at least progressiveSizingMinRealizedProfitQuote. Either a losing
+  // close or a stop-loss close resets the streak to 0, dropping back to the
+  // base size. Off by default - this changes real position-sizing behavior,
+  // not just a threshold tweak.
+  progressiveSizingEnabled: boolean;
+  progressiveSizingWinStreakRequired: number;
+  progressiveSizingMinRealizedProfitQuote: number;
+  progressiveSizingScaleFactor: number;
+
   // Sell
   autoSellDelayMs: number;
   maxSellRetries: number;
@@ -38,6 +53,16 @@ export interface StrategyConfig {
   takeProfitPct: number; // used when exitStrategy === 'fixed'
   trailingActivationPct: number; // used when exitStrategy === 'trailing'
   trailingStopPct: number; // used when exitStrategy === 'trailing'
+
+  // Structural exit - a deterministic trigger independent of price P&L,
+  // alongside stopLossPct/takeProfitPct/priceCheckDurationMs below: if the
+  // token's own live activity (not its price) collapses below these floors,
+  // the reason the position was opened no longer holds regardless of
+  // current P&L. Same AI-override treatment as the other triggers when
+  // aiExitReviewEnabled (see lib/agent/exitDecisionEngine.ts).
+  structuralExitEnabled: boolean;
+  structuralExitMinVolume5mUsd: number;
+  structuralExitMinBuys1h: number;
 
   // Periodic AI judgment on open positions - "should I still be holding
   // this, or exit now even though SL/TP haven't fired?" (lib/agent/
@@ -100,6 +125,13 @@ export interface StrategyConfig {
   momentumMin24hChangePct: number;
   momentumMax24hChangePct: number;
   momentumMin1hChangePct: number;
+  // Guards against a one-sided tape (e.g. a single wallet buying against
+  // itself with no real counterparty activity, or a pool with no organic
+  // distribution yet) - requires at least this many real 1h sells to exist
+  // AND buys to still outnumber them, so the candidate shows genuine
+  // two-directional trading with buyers still in control, not just a raw
+  // buy counter climbing in isolation.
+  momentumMinSells1h: number;
   momentumPollIntervalMs: number;
   momentumMaxWatchlistSize: number;
 
@@ -315,7 +347,7 @@ export interface BurnAlert {
 export interface MomentumCriterionResult {
   criterionName:
     | 'minLiquidity' | 'minAge' | 'maxAge' | 'min1hBuys' | 'min5mBuys'
-    | 'min24hVolume' | 'min24hChange' | 'max24hChange' | 'min1hChange';
+    | 'min24hVolume' | 'min24hChange' | 'max24hChange' | 'min1hChange' | 'twoSidedTape';
   ok: boolean;
   message?: string;
 }
@@ -445,7 +477,7 @@ export interface SimulatedFill {
   feeQuote: number;
 }
 
-export type PositionStatus = 'open' | 'closed_tp' | 'closed_sl' | 'closed_timeout' | 'closed_manual' | 'closed_ai_exit';
+export type PositionStatus = 'open' | 'closed_tp' | 'closed_sl' | 'closed_timeout' | 'closed_manual' | 'closed_ai_exit' | 'closed_structural';
 
 // Sentinel meaning "no peak recorded yet" - the first real unrealized P&L
 // reading becomes the peak naturally via Math.max, avoiding a nullable field.
