@@ -28,6 +28,7 @@ import {
   AgentDecision,
   AgentDecisionDetailed,
   AgentSuggestion,
+  CreatorLaunch,
   DetectedPool,
   EquitySnapshot,
   FilterOutcome,
@@ -168,6 +169,12 @@ export async function getRecentWalletAlerts(limit = 100): Promise<WalletAlert[]>
   if (!isReadOnlyDeployment()) return localDb.getRecentWalletAlerts(limit);
   const rows = await tursoRows(`SELECT * FROM wallet_alerts ORDER BY detected_at DESC LIMIT ?`, [limit]);
   return rows.map(localDb.rowToWalletAlert);
+}
+
+export async function getRecentCreatorLaunches(limit = 100): Promise<CreatorLaunch[]> {
+  if (!isReadOnlyDeployment()) return localDb.getRecentCreatorLaunches(limit);
+  const rows = await tursoRows(`SELECT * FROM creator_launches ORDER BY detected_at DESC LIMIT ?`, [limit]);
+  return rows.map(localDb.rowToCreatorLaunch);
 }
 
 export async function getMeta(key: string): Promise<string | null> {

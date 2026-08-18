@@ -13,6 +13,7 @@ import {
   AgentDecisionDetailed,
   AgentSuggestion,
   AgentSuggestionStatus,
+  CreatorLaunch,
   DetectedPool,
   EquitySnapshot,
   FilterOutcome,
@@ -939,5 +940,30 @@ export function rowToWalletAlert(row: any): WalletAlert {
     suggestedTarget2Pct: row.suggested_target2_pct,
     suggestedTrailingStopPct: row.suggested_trailing_stop_pct,
     suggestedMaxHoldMinutes: row.suggested_max_hold_minutes,
+  };
+}
+
+export function insertCreatorLaunch(c: Omit<CreatorLaunch, 'id'>): number {
+  const info = getDb()
+    .prepare(
+      `INSERT INTO creator_launches (creator_address, mint, name, symbol, detected_at)
+       VALUES (@creatorAddress, @mint, @name, @symbol, @detectedAt)`,
+    )
+    .run(c);
+  return info.lastInsertRowid as number;
+}
+
+export function getRecentCreatorLaunches(limit = 100): CreatorLaunch[] {
+  return getDb().prepare(`SELECT * FROM creator_launches ORDER BY detected_at DESC LIMIT ?`).all(limit).map(rowToCreatorLaunch);
+}
+
+export function rowToCreatorLaunch(row: any): CreatorLaunch {
+  return {
+    id: row.id,
+    creatorAddress: row.creator_address,
+    mint: row.mint,
+    name: row.name,
+    symbol: row.symbol,
+    detectedAt: row.detected_at,
   };
 }

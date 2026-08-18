@@ -168,6 +168,11 @@ export const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
   walletAlertTrailingStopPct: 15,
   walletAlertMaxHoldMinutes: 15,
 
+  // Creator-launch tracking - empty by default. Addresses here get a live
+  // Discord + dashboard alert the instant they create a brand-new pump.fun
+  // token, before it's even migrated - see lib/pumpfun/createEventDecoder.ts.
+  trackedCreators: [],
+
   // Pre-migration pump.fun growth watchlist - off by default until the
   // worker has live RPC access to verify creation detection actually works
   // (see lib/pumpfun/listener.ts). Thresholds mirror the user's reference
