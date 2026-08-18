@@ -80,7 +80,23 @@ export const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
   momentumMin5mBuys: 3,
   momentumMin24hVolumeUsd: 5_000,
   momentumMin24hChangePct: -60,
-  momentumMax24hChangePct: 300,
+  // Was 300 - live-traced 2026-08-17: every single real 24h+ runner we
+  // detected (checked 4 by hand, e.g. one at 190,839% 24h change with 3,243
+  // buys/1h and $566k liquidity - every other criterion passed cleanly)
+  // failed ONLY this one, because it had already pumped past 300% by the
+  // time our own PumpSwap-pool-creation listener even saw it (post
+  // pump.fun-migration detection is inherently "after some price discovery
+  // already happened", not "at the literal instant of creation"). A fresh
+  // runner-review scan confirmed this isn't a fluke: 52 real runners
+  // (>=100% in 24h) detected in 24h, only 1 ever bought. Raised to
+  // effectively uncapped - min1hChangePct below already catches an actual
+  // active reversal in real time, which is the risk this cap was meant to
+  // guard against; a static 24h ceiling was just excluding the exact
+  // population being chased. Not added to heuristicTuner.ts's tunable
+  // BOUNDS (would need real trade outcomes at high 24h-change entries to
+  // calibrate a real ceiling, which we have none of yet since this gate
+  // blocked every one).
+  momentumMax24hChangePct: 1_000_000,
   momentumMin1hChangePct: -20,
   momentumPollIntervalMs: 20_000,
   momentumMaxWatchlistSize: 300,
