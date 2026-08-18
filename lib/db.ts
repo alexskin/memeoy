@@ -983,6 +983,10 @@ export function getRecentBurnAlerts(limit = 100): BurnAlert[] {
   return getDb().prepare(`SELECT * FROM burn_alerts ORDER BY detected_at DESC LIMIT ?`).all(limit).map(rowToBurnAlert);
 }
 
+export function updateBurnAlertBurners(id: number, burners: { address: string; amount: number }[]): void {
+  getDb().prepare(`UPDATE burn_alerts SET burners_json = ? WHERE id = ?`).run(JSON.stringify(burners), id);
+}
+
 export function rowToBurnAlert(row: any): BurnAlert {
   return {
     id: row.id,
@@ -990,5 +994,6 @@ export function rowToBurnAlert(row: any): BurnAlert {
     burnedAmount: row.burned_amount,
     supplyAfter: row.supply_after,
     detectedAt: row.detected_at,
+    burners: row.burners_json ? JSON.parse(row.burners_json) : undefined,
   };
 }

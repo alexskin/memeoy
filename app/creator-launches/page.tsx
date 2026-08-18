@@ -51,6 +51,10 @@ export default function CreatorLaunchesPage() {
       const alert = msg.payload as BurnAlert;
       setBurnAlerts((prev) => [alert, ...prev].slice(0, 1000));
     }
+    if (msg.event === 'burn.alert.update') {
+      const { id, burners } = msg.payload as { id: number; burners: BurnAlert['burners'] };
+      setBurnAlerts((prev) => prev.map((b) => (b.id === id ? { ...b, burners } : b)));
+    }
   }, []);
 
   const { connected } = useWorkerSocket(WS_PORT, onMessage);
@@ -131,6 +135,7 @@ export default function CreatorLaunchesPage() {
                 <th>Mint</th>
                 <th>Burned</th>
                 <th>Supply after</th>
+                <th>Burner</th>
               </tr>
             </thead>
             <tbody>
@@ -140,6 +145,19 @@ export default function CreatorLaunchesPage() {
                   <td><CopyableCA address={b.mint} /></td>
                   <td className="pos">{b.burnedAmount.toLocaleString('en-US', { maximumFractionDigits: 0 })}</td>
                   <td>{b.supplyAfter.toLocaleString('en-US', { maximumFractionDigits: 0 })}</td>
+                  <td>
+                    {!b.burners || b.burners.length === 0 ? (
+                      <span style={{ color: 'var(--muted)' }}>looking up…</span>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {b.burners.map((burner) => (
+                          <div key={burner.address} title={`${burner.amount.toLocaleString('en-US', { maximumFractionDigits: 0 })} token`}>
+                            <CopyableCA address={burner.address} />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>

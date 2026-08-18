@@ -229,6 +229,11 @@ async function main() {
   } catch (error) {
     if (!String(error).includes('duplicate column')) throw error;
   }
+  try {
+    await client.execute(`ALTER TABLE burn_alerts ADD COLUMN burners_json TEXT`);
+  } catch (error) {
+    if (!String(error).includes('duplicate column')) throw error;
+  }
 
   console.log(`Turso schema migration complete (${STATEMENTS.length} statements).`);
 }

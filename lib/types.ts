@@ -306,6 +306,10 @@ export interface BurnAlert {
   burnedAmount: number;
   supplyAfter: number;
   detectedAt: number;
+  // Filled in asynchronously after the alert fires (on-chain transaction
+  // attribution is slow on high-volume mints) - undefined/empty until the
+  // burnWatcher's follow-up lookup resolves.
+  burners?: { address: string; amount: number }[];
 }
 
 export interface MomentumCriterionResult {

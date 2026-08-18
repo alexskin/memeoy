@@ -256,6 +256,11 @@ export function migrate(db: Database.Database) {
 
   // AI exit review (lib/agent/exitDecisionEngine.ts) - set only when status = 'closed_ai_exit'.
   addColumnIfMissing(db, 'positions', 'ai_exit_reasoning', `ai_exit_reasoning TEXT`);
+
+  // Burner wallet attribution (lib/burnTracker/burnWatcher.ts) - filled in
+  // asynchronously after the alert already fired, since on-chain lookup is
+  // slow on high-volume mints.
+  addColumnIfMissing(db, 'burn_alerts', 'burners_json', `burners_json TEXT`);
 }
 
 function columnExists(db: Database.Database, table: string, columnName: string): boolean {
