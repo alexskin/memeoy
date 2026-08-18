@@ -203,6 +203,14 @@ export interface StrategyConfig {
   // pumpfunPremigrationEnabled trading is on. Empty array disables it.
   trackedCreators: string[];
 
+  // Burn tracking: alerts (Discord + dashboard, never trades) when a
+  // tracked mint's on-chain total supply drops by at least thresholdTokens
+  // since the last poll (lib/burnTracker/burnWatcher.ts). thresholdTokens
+  // is a plain token-count, not USD - the caller is expected to convert a
+  // dollar target to a token amount once at setup time using the price at
+  // that moment (no live USD conversion per check). Empty array disables it.
+  trackedBurnMints: { mint: string; thresholdTokens: number }[];
+
   // Pre-migration pump.fun growth watchlist (lib/watchlist/
   // premigrationWatchlistMonitor.ts): a SEPARATE cohort from the
   // PumpSwap/Raydium momentum watchlist above - candidates here are
@@ -284,6 +292,19 @@ export interface CreatorLaunch {
   mint: string;
   name: string;
   symbol: string;
+  detectedAt: number;
+}
+
+// A large burn detected for a tracked mint - see lib/burnTracker/burnWatcher.ts.
+// Polls the mint's on-chain total supply (connection.getTokenSupply) rather
+// than parsing raw Burn-instruction logs (which carry no amount data) -
+// supply going down IS the burn, for any token whose mint authority is
+// renounced (the pump.fun norm), no per-transaction log decoding needed.
+export interface BurnAlert {
+  id: number;
+  mint: string;
+  burnedAmount: number;
+  supplyAfter: number;
   detectedAt: number;
 }
 

@@ -72,6 +72,7 @@ import { checkHolderConcentration } from '../lib/filters/holderConcentrationFilt
 import { checkInsiderConcentration } from '../lib/filters/insiderFilter';
 import { WatchlistMonitor } from '../lib/watchlist/watchlistMonitor';
 import { WalletWatcher } from '../lib/walletTracker/walletWatcher';
+import { BurnWatcher } from '../lib/burnTracker/burnWatcher';
 import { rebuildPriceSourceForPool } from '../lib/solana/rebuildPriceSource';
 import { resolveRiskParams } from '../lib/portfolio/riskParams';
 import { PumpSwapPool, decodePoolAccount } from '../lib/pumpswap/state';
@@ -163,6 +164,7 @@ async function main() {
   const poolCache = new PoolCache();
   const positionMonitor = new PositionMonitor(getActiveConfig, broadcast);
   const walletWatcher = new WalletWatcher(getActiveConfig, broadcast);
+  const burnWatcher = new BurnWatcher(connection, getActiveConfig, broadcast);
 
   // Re-attach positions that were left open by a previous run. pump.fun and
   // pumpswap positions carry everything needed to rebuild a PriceSource
@@ -836,12 +838,14 @@ async function main() {
     watchlistMonitor.start();
     premigrationWatchlistMonitor.start();
     walletWatcher.start();
+    burnWatcher.start();
   }
 
   async function stopDiscovery() {
     watchlistMonitor.stop();
     premigrationWatchlistMonitor.stop();
     walletWatcher.stop();
+    burnWatcher.stop();
     await listeners.stop();
     await pumpFunListener.stop();
   }

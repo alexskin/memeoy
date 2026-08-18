@@ -173,6 +173,11 @@ export const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
   // token, before it's even migrated - see lib/pumpfun/createEventDecoder.ts.
   trackedCreators: [],
 
+  // Burn tracking - empty by default. thresholdTokens is a plain token
+  // count, computed once from a USD target at setup time (price-at-setup),
+  // not re-converted live.
+  trackedBurnMints: [],
+
   // Pre-migration pump.fun growth watchlist - off by default until the
   // worker has live RPC access to verify creation detection actually works
   // (see lib/pumpfun/listener.ts). Thresholds mirror the user's reference

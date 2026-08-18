@@ -136,6 +136,7 @@ export async function runTursoSync(window = DEFAULT_WINDOW): Promise<void> {
   await syncQuery(client, 'agent_suggestions', `SELECT * FROM agent_suggestions ORDER BY id DESC LIMIT ?`, [window]);
   await syncQuery(client, 'wallet_alerts', `SELECT * FROM wallet_alerts ORDER BY id DESC LIMIT ?`, [window]);
   await syncQuery(client, 'creator_launches', `SELECT * FROM creator_launches ORDER BY id DESC LIMIT ?`, [window]);
+  await syncQuery(client, 'burn_alerts', `SELECT * FROM burn_alerts ORDER BY id DESC LIMIT ?`, [window]);
   await syncQuery(
     client,
     'meta',

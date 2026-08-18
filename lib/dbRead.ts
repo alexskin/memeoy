@@ -28,6 +28,7 @@ import {
   AgentDecision,
   AgentDecisionDetailed,
   AgentSuggestion,
+  BurnAlert,
   CreatorLaunch,
   DetectedPool,
   EquitySnapshot,
@@ -175,6 +176,12 @@ export async function getRecentCreatorLaunches(limit = 100): Promise<CreatorLaun
   if (!isReadOnlyDeployment()) return localDb.getRecentCreatorLaunches(limit);
   const rows = await tursoRows(`SELECT * FROM creator_launches ORDER BY detected_at DESC LIMIT ?`, [limit]);
   return rows.map(localDb.rowToCreatorLaunch);
+}
+
+export async function getRecentBurnAlerts(limit = 100): Promise<BurnAlert[]> {
+  if (!isReadOnlyDeployment()) return localDb.getRecentBurnAlerts(limit);
+  const rows = await tursoRows(`SELECT * FROM burn_alerts ORDER BY detected_at DESC LIMIT ?`, [limit]);
+  return rows.map(localDb.rowToBurnAlert);
 }
 
 export async function getMeta(key: string): Promise<string | null> {

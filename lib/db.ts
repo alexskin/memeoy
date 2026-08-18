@@ -13,6 +13,7 @@ import {
   AgentDecisionDetailed,
   AgentSuggestion,
   AgentSuggestionStatus,
+  BurnAlert,
   CreatorLaunch,
   DetectedPool,
   EquitySnapshot,
@@ -964,6 +965,30 @@ export function rowToCreatorLaunch(row: any): CreatorLaunch {
     mint: row.mint,
     name: row.name,
     symbol: row.symbol,
+    detectedAt: row.detected_at,
+  };
+}
+
+export function insertBurnAlert(b: Omit<BurnAlert, 'id'>): number {
+  const info = getDb()
+    .prepare(
+      `INSERT INTO burn_alerts (mint, burned_amount, supply_after, detected_at)
+       VALUES (@mint, @burnedAmount, @supplyAfter, @detectedAt)`,
+    )
+    .run(b);
+  return info.lastInsertRowid as number;
+}
+
+export function getRecentBurnAlerts(limit = 100): BurnAlert[] {
+  return getDb().prepare(`SELECT * FROM burn_alerts ORDER BY detected_at DESC LIMIT ?`).all(limit).map(rowToBurnAlert);
+}
+
+export function rowToBurnAlert(row: any): BurnAlert {
+  return {
+    id: row.id,
+    mint: row.mint,
+    burnedAmount: row.burned_amount,
+    supplyAfter: row.supply_after,
     detectedAt: row.detected_at,
   };
 }

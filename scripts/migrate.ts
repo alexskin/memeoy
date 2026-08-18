@@ -162,6 +162,15 @@ export function migrate(db: Database.Database) {
     );
     CREATE INDEX IF NOT EXISTS idx_creator_launches_detected_at ON creator_launches(detected_at);
 
+    CREATE TABLE IF NOT EXISTS burn_alerts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mint TEXT NOT NULL,
+      burned_amount REAL NOT NULL,
+      supply_after REAL NOT NULL,
+      detected_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_burn_alerts_detected_at ON burn_alerts(detected_at);
+
     CREATE TABLE IF NOT EXISTS partial_exits (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       position_id INTEGER NOT NULL REFERENCES positions(id),
