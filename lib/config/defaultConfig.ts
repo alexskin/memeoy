@@ -99,7 +99,15 @@ export const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
   momentumMax24hChangePct: 1_000_000,
   momentumMin1hChangePct: -20,
   momentumPollIntervalMs: 20_000,
-  momentumMaxWatchlistSize: 300,
+  // Was 300 - live-checked 2026-08-18: the watchlist was CHRONICALLY at
+  // capacity (300/300 pools in 'watching' status) with every ~20s tick
+  // evicting 2-10 of the oldest candidates just to make room for new
+  // pumpswap detections, before those candidates had time to accumulate
+  // enough 1h/5m buys to ever clear momentum. Raised to 450 to give real
+  // candidates more dwell time. getTokensBatch is rate-limited to 55
+  // req/min in batches of 30 - at 450 pools/poll * 3 polls/min (20s
+  // interval) that's ceil(450/30)*3 = 45 req/min, still under budget.
+  momentumMaxWatchlistSize: 450,
 
   // Revival gate defaults mirror the DexScreener screener URL worked out
   // interactively this session (dexscreener.com/solana?minAge=...&min6HChg=

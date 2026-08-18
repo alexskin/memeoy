@@ -41,6 +41,12 @@ export interface DecisionInput {
   missedRunnerCalibration: string;
 }
 
+function describeQualification(momentumPass: boolean, revivalPass: boolean): string {
+  if (momentumPass && revivalPass) return 'momentum AND revival (rare - cleared both alternate gates)';
+  if (revivalPass) return 'revival only (an older pool showing a fresh second-wind uptick after going flat)';
+  return 'momentum only (a fresh, still-actively-pumping pool)';
+}
+
 export interface Decision {
   action: AgentDecisionAction;
   confidence: number;
@@ -60,11 +66,13 @@ function fallbackDecision(reasoning: string): Decision {
   };
 }
 
-const SYSTEM_PROMPT = `You are the final judgment gate for a Solana memecoin PAPER-TRADING bot (simulated fills, no real funds, no real wallet). A candidate has already cleared two deterministic numeric gates (momentum + a "revival" pattern: pumped, went flat, just started a fresh small uptick). Your job is to decide whether this specific candidate is actually worth buying, or whether it's a manufactured/wash-traded bait pump dressed up to look like a real revival.
+const SYSTEM_PROMPT = `You are the final judgment gate for a Solana memecoin PAPER-TRADING bot (simulated fills, no real funds, no real wallet). A candidate reaches you by clearing AT LEAST ONE of two deliberately mutually-exclusive deterministic gates: "momentum" (a fresh pool, still actively pumping, always <= 12h old) or "revival" (an older pool, 12h-14d old, that went flat and just started a fresh small second-wind uptick). These target disjoint age ranges by design - a momentum candidate is structurally too young to ever also pass revival's age floor, and vice versa. You will be told which gate this specific candidate actually qualified through.
 
-You will be given: the momentum criteria results, the revival criteria results and a 0-100 strength score, an optional 0-100 "degen score" (how organic vs. manufactured the token's social/website presence feels - null if no link was found), a summary of how similar past signal combinations actually performed, and a missed-runner calibration line showing what fraction of past skips in each degen-score bucket later turned into a real big mover. Use that last line to recalibrate how much weight you give degen score - if low-degen-score skips have been missing real runners often, don't let a low score alone drive a skip.
+**Do not treat failing the OTHER gate's criteria as a red flag or as evidence of a "fake" pattern** - that failure is expected and means nothing (e.g. a fresh momentum candidate SHOULD fail revival's 12h+ age requirement; that is not suspicious). Only judge the candidate on the gate it actually qualified through, plus the degen score and performance context below.
 
-Weigh all of it together - don't just check that the numbers cleared their bars. A high revival strength with a low degen score (numbers look right, narrative looks fake) is exactly the kind of case where you should lean toward skipping. Use the recent-performance summary to calibrate how much to trust a given signal combination, not as a hard rule.
+You will be given: which gate qualified this candidate, the momentum criteria results, the revival criteria results and a 0-100 strength score, an optional 0-100 "degen score" (how organic vs. manufactured the token's social/website presence feels - null if no link was found), a summary of how similar past signal combinations actually performed, and a missed-runner calibration line showing what fraction of past skips in each degen-score bucket later turned into a real big mover. Use that last line to recalibrate how much weight you give degen score - if low-degen-score skips have been missing real runners often, don't let a low score alone drive a skip.
+
+Weigh it together - don't just check that the numbers cleared their bars, and don't manufacture suspicion from the non-qualifying gate's criteria. A candidate that qualified cleanly via its relevant gate but has a low degen score (numbers look right, narrative looks fake) is exactly the kind of case where you should lean toward skipping. Use the recent-performance summary to calibrate how much to trust a given signal combination, not as a hard rule.
 
 Reply with EXACTLY this JSON shape, nothing else, no markdown fences: {"action": "buy" | "skip", "confidence": <0-1 number>, "reasoning": "<one sentence, under 40 words>"}`;
 
@@ -123,6 +131,7 @@ export async function decideCandidate(input: DecisionInput): Promise<Decision> {
   }
 
   const userPrompt = `Mint: ${input.baseMint}
+Qualified via: ${describeQualification(input.momentum.pass, input.revival.pass)}
 Momentum criteria: ${JSON.stringify(input.momentum.results)}
 Revival criteria: ${JSON.stringify(input.revival.results)}
 Revival strength: ${input.revival.strengthScore}/100
