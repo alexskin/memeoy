@@ -168,7 +168,12 @@ export const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
   // example of a wallet worth tracking and how to add one from the
   // dashboard's Wallet Alerts tab. Advisory only, never auto-buys.
   trackedWallets: [],
-  walletAlertsEnabled: true,
+  // Off by default - lib/walletTracker/heliusClient.ts calls Helius's
+  // proprietary Enhanced Transactions API (not standard RPC), so this only
+  // works when RPC_ENDPOINT is a Helius URL. Taken offline 2026-08-18 when
+  // switching the primary RPC away from Helius; re-enable if a Helius key
+  // is configured again (doesn't need to be the primary RPC_ENDPOINT).
+  walletAlertsEnabled: false,
   walletTrackerPollIntervalMs: 20_000,
   walletAlertStopLossPct: 20,
   walletAlertTarget1Pct: 35,

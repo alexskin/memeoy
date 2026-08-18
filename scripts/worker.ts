@@ -30,6 +30,7 @@ import {
   COMMITMENT_LEVEL,
   PRE_LOAD_EXISTING_MARKETS,
   RPC_ENDPOINT,
+  RPC_PROVIDER,
   RPC_WEBSOCKET_ENDPOINT,
   WORKER_WS_PORT,
 } from '../lib/config/env';
@@ -129,6 +130,7 @@ async function main() {
     logger.error({}, 'RPC_ENDPOINT/RPC_WEBSOCKET_ENDPOINT are not set - copy .env.example to .env.local and fill them in. The worker cannot run without RPC access.');
     process.exit(1);
   }
+  logger.info({ provider: RPC_PROVIDER }, 'RPC provider detected from RPC_ENDPOINT');
 
   // Must be first: refuses to start (rather than silently corrupting the
   // shared balance) if another worker is already running against this DB.
@@ -281,7 +283,7 @@ async function main() {
     broadcast('pool.status', { id: ctx.detectedPoolId, status: 'passed' });
 
     if (config.checkHolderConcentration) {
-      const holderResult = await checkHolderConcentration(connection, ctx.baseMint, ctx.excludeFromConcentration, config);
+      const holderResult = await checkHolderConcentration(ctx.baseMint, ctx.excludeFromConcentration.map((k) => k.toBase58()), config);
       insertFilterResult({
         detectedPoolId: ctx.detectedPoolId,
         filterName: 'holderConcentration',
@@ -756,7 +758,7 @@ async function main() {
       // Confirmed live convention for pump.fun (see reattach/priceSource
       // code elsewhere in this file): the associated bonding-curve token
       // account is owned by the bonding-curve PDA itself.
-      const holderResult = await checkHolderConcentration(connection, event.mint.toString(), [event.bondingCurve], config);
+      const holderResult = await checkHolderConcentration(event.mint.toString(), [event.bondingCurve.toBase58()], config);
       insertFilterResult({
         detectedPoolId,
         filterName: 'holderConcentration',

@@ -23,6 +23,7 @@ const API_BASE = 'https://api.rugcheck.xyz/v1';
 const FETCH_TIMEOUT_MS = 8000;
 
 interface RugCheckTopHolder {
+  owner: string;
   pct: number;
   insider: boolean;
 }
@@ -80,6 +81,34 @@ export async function getInsiderInfo(mint: string): Promise<InsiderInfo | null> 
     topHolderInsiderPct,
     insiderWalletCount: report.graphInsidersDetected ?? 0,
   };
+}
+
+export interface TopHolderInfo {
+  topNonExcludedHolderPct: number;
+}
+
+// Same top-20-holders data as getInsiderInfo, filtered down to the largest
+// holder that ISN'T one of the given owners (a pool/bonding-curve owner
+// legitimately holds most of the supply pre-trade - that's not a real
+// concentration risk, same exclusion semantics the old RPC-based
+// holderConcentrationFilter.ts used). Replaces raw
+// getTokenLargestAccounts/getProgramAccounts calls entirely - both are
+// blocked on Chainstack's free tier ("Method requires plan upgrade",
+// confirmed live 2026-08-18), and free RPC tiers restrict these same heavy
+// indexing methods near-universally, so relying on RugCheck's already-fetched
+// top-20 snapshot sidesteps the whole "which provider allows this" problem.
+// A holder ranked below the top 20 is, by construction, smaller than
+// whatever this returns, so the top-20 cap never misses a real concentration risk.
+export async function getTopHolderInfo(mint: string, excludeOwners: string[]): Promise<TopHolderInfo | null> {
+  const report = await fetchJson<RugCheckReport>(`${API_BASE}/tokens/${mint}/report`);
+  if (!report?.token) return null;
+
+  const excludeSet = new Set(excludeOwners);
+  const topNonExcludedHolderPct = (report.topHolders ?? [])
+    .filter((h) => !excludeSet.has(h.owner))
+    .reduce((max, h) => Math.max(max, h.pct), 0);
+
+  return { topNonExcludedHolderPct };
 }
 
 export async function getRiskInfo(mint: string): Promise<RiskInfo | null> {

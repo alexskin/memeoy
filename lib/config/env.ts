@@ -14,12 +14,51 @@
 export const RPC_ENDPOINT = process.env.RPC_ENDPOINT || '';
 export const RPC_WEBSOCKET_ENDPOINT = process.env.RPC_WEBSOCKET_ENDPOINT || '';
 
-// Derived from RPC_ENDPOINT rather than a separate env var, since the
-// Helius RPC URL already carries it (?api-key=...) - used only for the
-// read-only Enhanced Transactions API (lib/walletTracker/), never for
-// anything wallet/signing-related. Empty string if not a Helius endpoint;
-// callers must treat that as "wallet tracking unavailable," not throw.
-const heliusApiKeyMatch = RPC_ENDPOINT.match(/api-key=([^&]+)/);
+// Optional secondary RPC - only used as a per-call failover when the
+// primary throws a rate-limit-shaped error (lib/solana/connection.ts), so a
+// free-tier cap on the primary doesn't stall the whole worker. Leave unset
+// to run single-provider, exactly as before.
+export const RPC_ENDPOINT_FALLBACK = process.env.RPC_ENDPOINT_FALLBACK || '';
+export const RPC_WEBSOCKET_ENDPOINT_FALLBACK = process.env.RPC_WEBSOCKET_ENDPOINT_FALLBACK || '';
+
+// Auto-detected from RPC_ENDPOINT's hostname - deliberately no separate
+// RPC_PROVIDER env var. Every provider speaks the same standard Solana
+// JSON-RPC/WebSocket protocol (Connection/getProgramAccounts/subscriptions
+// all work identically regardless of which one is configured); this is only
+// used to (a) log which provider is actually active on worker startup, and
+// (b) gate provider-SPECIFIC proprietary APIs (currently just Helius's
+// Enhanced Transactions API below) so they fail with a clear reason instead
+// of a confusing generic error when a different provider is configured.
+export type RpcProvider = 'helius' | 'chainstack' | 'alchemy' | 'ankr' | 'drpc' | 'syndica' | 'quicknode' | 'shyft' | 'unknown';
+
+function detectRpcProvider(url: string): RpcProvider {
+  if (!url) return 'unknown';
+  let hostname: string;
+  try {
+    hostname = new URL(url).hostname.toLowerCase();
+  } catch {
+    return 'unknown';
+  }
+  if (hostname.includes('helius')) return 'helius';
+  if (hostname.includes('chainstack')) return 'chainstack';
+  if (hostname.includes('alchemy')) return 'alchemy';
+  if (hostname.includes('ankr')) return 'ankr';
+  if (hostname.includes('drpc')) return 'drpc';
+  if (hostname.includes('syndica')) return 'syndica';
+  if (hostname.includes('quicknode')) return 'quicknode';
+  if (hostname.includes('shyft')) return 'shyft';
+  return 'unknown';
+}
+
+export const RPC_PROVIDER: RpcProvider = detectRpcProvider(RPC_ENDPOINT);
+export const RPC_PROVIDER_FALLBACK: RpcProvider = detectRpcProvider(RPC_ENDPOINT_FALLBACK);
+
+// Only meaningful when RPC_PROVIDER === 'helius' - the Helius RPC URL
+// carries it (?api-key=...), used only for the read-only Enhanced
+// Transactions API (lib/walletTracker/), never for anything
+// wallet/signing-related. Empty string on any other provider; callers must
+// treat that as "wallet tracking unavailable," not throw.
+const heliusApiKeyMatch = RPC_PROVIDER === 'helius' ? RPC_ENDPOINT.match(/api-key=([^&]+)/) : null;
 export const HELIUS_API_KEY = heliusApiKeyMatch ? heliusApiKeyMatch[1] : '';
 export const COMMITMENT_LEVEL = (process.env.COMMITMENT_LEVEL || 'confirmed') as
   | 'processed'
