@@ -111,15 +111,23 @@ export async function getTopHolderInfo(mint: string, excludeOwners: string[]): P
   return { topNonExcludedHolderPct };
 }
 
-export async function getRiskInfo(mint: string): Promise<RiskInfo | null> {
+// excludeOwners defaults to [] for premigrationWatchlistMonitor.ts's call
+// site (a bonding-curve pool has no separate LP vault holder the same way a
+// migrated PumpSwap pool does, and that path already disables the top10
+// gate via a 100% threshold). The PumpSwap post-migration call site passes
+// the pool vault address so it isn't counted as a "holder" - otherwise
+// top10HoldersPct would almost always read high for a legitimate reason
+// (the pool holding remaining supply) and the gate would be meaningless.
+export async function getRiskInfo(mint: string, excludeOwners: string[] = []): Promise<RiskInfo | null> {
   const report = await fetchJson<RugCheckReport>(`${API_BASE}/tokens/${mint}/report`);
   if (!report?.token || report.token.supply <= 0) return null;
 
-  const topHolderInsiderPct = (report.topHolders ?? []).filter((h) => h.insider).reduce((sum, h) => sum + h.pct, 0);
+  const excludeSet = new Set(excludeOwners);
+  const nonPoolHolders = (report.topHolders ?? []).filter((h) => !excludeSet.has(h.owner));
+
+  const topHolderInsiderPct = nonPoolHolders.filter((h) => h.insider).reduce((sum, h) => sum + h.pct, 0);
   const devHoldingPct = ((report.creatorBalance ?? 0) / report.token.supply) * 100;
-  const top10HoldersPct = (report.topHolders ?? [])
-    .slice(0, 10)
-    .reduce((sum, h) => sum + h.pct, 0);
+  const top10HoldersPct = nonPoolHolders.slice(0, 10).reduce((sum, h) => sum + h.pct, 0);
 
   return {
     topHolderInsiderPct,

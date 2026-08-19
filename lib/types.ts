@@ -111,6 +111,19 @@ export interface StrategyConfig {
   // detected but 0% inside its top 20 holders).
   momentumMaxInsiderWalletCount: number;
 
+  // Dev/aggregate concentration - catches the case checkHolderConcentration
+  // (largest SINGLE non-pool holder) and checkInsiderConcentration (RugCheck's
+  // insider-flagged wallets only) can both miss: several holders each sitting
+  // safely under the single-holder threshold, none flagged "insider" by
+  // RugCheck's clustering heuristic, that still add up to majority control
+  // (confirmed live: a bought token had a 14.4% single largest holder and 0
+  // RugCheck-flagged insiders, yet 56.3% dev holding and 57.9% top-10
+  // aggregate per an external scanner). Same RugCheck report, same
+  // fail-closed-on-missing-data convention as the two filters above.
+  checkDevRisk: boolean;
+  momentumMaxDevHoldingPct: number;
+  momentumMaxTop10HoldersPct: number;
+
   // Momentum watchlist - replaces instant-buy. A candidate that passes the
   // safety filters above goes onto a watchlist instead of being bought
   // immediately; these thresholds (mirroring a DexScreener "new pairs"
@@ -442,7 +455,7 @@ export interface PremigrationSnapshot {
 
 export interface FilterOutcome {
   detectedPoolId: number;
-  filterName: 'burn' | 'renouncedFreeze' | 'poolSize' | 'mutable' | 'holderConcentration' | 'insiderConcentration';
+  filterName: 'burn' | 'renouncedFreeze' | 'poolSize' | 'mutable' | 'holderConcentration' | 'insiderConcentration' | 'devRisk';
   pass: boolean;
   message?: string;
   attemptNumber: number;

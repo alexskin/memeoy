@@ -81,6 +81,10 @@ export const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
   momentumMaxInsiderPct: 10,
   momentumMaxInsiderWalletCount: 30,
 
+  checkDevRisk: true,
+  momentumMaxDevHoldingPct: 15,
+  momentumMaxTop10HoldersPct: 45,
+
   // Originally mirrored the user's DexScreener /new-pairs reference screener
   // 1:1 (minLiq=10000, min1HBuys=50, min24HVol=100000, ...), but that's tuned
   // for filtering an already-large pool of live pairs, not for a fresh

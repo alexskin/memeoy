@@ -71,6 +71,7 @@ import { maybeRunRunnerReview } from '../lib/agent/runnerReview';
 import { acquireWorkerLock } from '../lib/workerLock';
 import { checkHolderConcentration } from '../lib/filters/holderConcentrationFilter';
 import { checkInsiderConcentration } from '../lib/filters/insiderFilter';
+import { checkDevRisk } from '../lib/filters/devRiskFilter';
 import { WatchlistMonitor } from '../lib/watchlist/watchlistMonitor';
 import { WalletWatcher } from '../lib/walletTracker/walletWatcher';
 import { BurnWatcher } from '../lib/burnTracker/burnWatcher';
@@ -316,6 +317,26 @@ async function main() {
       broadcast('filter.result', { detectedPoolId: ctx.detectedPoolId, filterName: 'insiderConcentration', pass: insiderResult.ok, message: insiderResult.message });
 
       if (!insiderResult.ok) {
+        updatePoolStatus(ctx.detectedPoolId, 'rejected');
+        broadcast('pool.status', { id: ctx.detectedPoolId, status: 'rejected' });
+        return;
+      }
+    }
+
+    if (config.checkDevRisk) {
+      const devRiskResult = await checkDevRisk(ctx.baseMint, ctx.excludeFromConcentration.map((k) => k.toBase58()), config);
+      insertFilterResult({
+        detectedPoolId: ctx.detectedPoolId,
+        filterName: 'devRisk',
+        pass: devRiskResult.ok,
+        message: devRiskResult.message,
+        attemptNumber: 1,
+        configVersionId: versionId,
+        checkedAt: Date.now(),
+      });
+      broadcast('filter.result', { detectedPoolId: ctx.detectedPoolId, filterName: 'devRisk', pass: devRiskResult.ok, message: devRiskResult.message });
+
+      if (!devRiskResult.ok) {
         updatePoolStatus(ctx.detectedPoolId, 'rejected');
         broadcast('pool.status', { id: ctx.detectedPoolId, status: 'rejected' });
         return;
@@ -791,6 +812,26 @@ async function main() {
       broadcast('filter.result', { detectedPoolId, filterName: 'insiderConcentration', pass: insiderResult.ok, message: insiderResult.message });
 
       if (!insiderResult.ok) {
+        updatePoolStatus(detectedPoolId, 'rejected');
+        broadcast('pool.status', { id: detectedPoolId, status: 'rejected' });
+        return;
+      }
+    }
+
+    if (config.checkDevRisk) {
+      const devRiskResult = await checkDevRisk(event.mint.toString(), [event.bondingCurve.toBase58()], config);
+      insertFilterResult({
+        detectedPoolId,
+        filterName: 'devRisk',
+        pass: devRiskResult.ok,
+        message: devRiskResult.message,
+        attemptNumber: 1,
+        configVersionId: versionId,
+        checkedAt: Date.now(),
+      });
+      broadcast('filter.result', { detectedPoolId, filterName: 'devRisk', pass: devRiskResult.ok, message: devRiskResult.message });
+
+      if (!devRiskResult.ok) {
         updatePoolStatus(detectedPoolId, 'rejected');
         broadcast('pool.status', { id: detectedPoolId, status: 'rejected' });
         return;

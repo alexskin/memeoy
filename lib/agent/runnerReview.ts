@@ -311,6 +311,14 @@ export function proposeChangesFromRunners(stats: RunnerReviewStats, config: Stra
             `insiderConcentration passed for only ${(fp.runnerPassRate * 100).toFixed(0)}% of runners vs ${(fp.nonRunnerPassRate * 100).toFixed(0)}% of non-runners - raising the insider cap ${config.momentumMaxInsiderPct}% -> ${next}%.`,
           );
         }
+      } else if (fp.filterName === 'devRisk' && config.checkDevRisk) {
+        const next = clampStep(config.momentumMaxDevHoldingPct, 1, 0.15, BOUNDS.momentumMaxDevHoldingPct);
+        if (next !== config.momentumMaxDevHoldingPct) {
+          diff.momentumMaxDevHoldingPct = { old: config.momentumMaxDevHoldingPct, new: next };
+          reasons.push(
+            `devRisk passed for only ${(fp.runnerPassRate * 100).toFixed(0)}% of runners vs ${(fp.nonRunnerPassRate * 100).toFixed(0)}% of non-runners - raising the dev-holding cap ${config.momentumMaxDevHoldingPct}% -> ${next}%.`,
+          );
+        }
       }
       if (Object.keys(diff).length > 0) break;
     }

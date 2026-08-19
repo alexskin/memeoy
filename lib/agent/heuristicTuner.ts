@@ -33,6 +33,8 @@ export const BOUNDS = {
   momentumMaxTopHolderPct: [5, 40],
   momentumMinAgeMinutes: [0, 15],
   momentumMaxInsiderPct: [5, 40],
+  momentumMaxDevHoldingPct: [5, 40],
+  momentumMaxTop10HoldersPct: [15, 80],
   // Revival gate (lib/dexscreener/revivalFilter.ts) is a deterministic
   // threshold gate exactly like the momentum bounds above, so it's tunable
   // the same way. degenScore/decisionEngine are NOT here - those are
