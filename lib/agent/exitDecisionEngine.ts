@@ -72,12 +72,12 @@ function fallbackDecision(reasoning: string): ExitDecision {
 
 const SYSTEM_PROMPT = `You are reviewing an OPEN position in a Solana memecoin PAPER-TRADING bot (simulated fills, no real funds). This is a periodic check-in, not the buy decision - the token already passed the buy gate.
 
-You have real authority here: you can end the position early, and you can override all four of its mechanical exit triggers - stop-loss, take-profit, max-hold time, and structural break - repeatedly, for as long as you keep seeing genuine evidence that overriding is the right call. A memecoin that's up 800% and still getting real buy volume should not be force-sold just because it crossed a static target price set before anyone knew how big the move would be. Equally, a token that's down sharply on real, active dumping should not be held "just in case" - that's exactly what stop-loss exists to prevent.
+You have real authority here: you can end the position early, and you can override all four of its mechanical exit triggers - stop-loss, take-profit, max-hold time, and structural break - repeatedly, for as long as you keep seeing genuine evidence that overriding is the right call. A memecoin that's up 800% and still getting real buy volume should not be force-sold just because it crossed a static target price set before anyone knew how big the move would be. Fresh Solana memecoins are also naturally violent in the other direction - sharp, fast red wicks within the first minute or two of a position are normal texture, not proof the trade failed, and a rigid stop-loss alone will get shaken out of real winners right before they run. Lean toward giving a position room to breathe; only treat a drop as the real thing when there's a genuine breakdown signal behind it (buying has actually dried up, volume is gone, or the dump looks coordinated/sustained), not just because a static price floor got touched.
 
 You'll get: current unrealized P&L% and peak P&L% since entry (a big pullback from peak matters more than the raw number), how long it's been held, live momentum (recent buy counts, 5m/24h volume, 1h price change - null means unavailable, not zero), and a summary of how similar situations performed recently.
 
-Up to four specific situations may be flagged, each with how many times you've already overridden it for this same position - the more times, the stronger the evidence needs to be to do it again. Don't rubber-stamp every review:
-- stopLossReached: the position hit its stop-loss. "hold" = ride past it. This is the highest-risk override - only do it with a specific, concrete reason the drop is noise (e.g. a brief liquidity wobble with buying still active), never just "might recover."
+Up to four specific situations may be flagged, each with how many times you've already overridden it for this same position - the more times, the stronger the evidence needs to be to do it again. Don't rubber-stamp every review, but don't default to bailing at the first red candle either:
+- stopLossReached: the position hit its stop-loss. "hold" = ride past it. Ride past it whenever buying activity is still present and there's no sign of a coordinated/sustained dump - a fast, sharp drawdown early in a position's life is exactly the kind of noise a fixed stop-loss can't tell apart from a real breakdown, so lean toward giving it room unless the momentum data itself confirms the move is real (buys gone, volume dead, or the position has already been ridden past this same trigger several times with no recovery).
 - takeProfitReached: the position hit its take-profit/trailing exit. "hold" = ride past it. Needs real evidence of continued momentum (active buying, volume, no reversal signal), not just "no reason not to."
 - timeoutReached: the position hit its max hold time. "hold" = grant another extension.
 - structuralBreakReached: the token's own live 5m volume or 1h buy count has fallen below the floor that justified opening this position, regardless of current price. "hold" = judge the drop-off as temporary (e.g. a brief lull between waves, with price and other signals still healthy) rather than the setup genuinely dying - this is about whether the token is still actually alive, not about price.
@@ -103,7 +103,13 @@ async function attemptDecision(input: ExitDecisionInput, userPrompt: string): Pr
       },
       body: JSON.stringify({
         model: 'claude-sonnet-5',
-        max_tokens: 150,
+        // Was 150 - confirmed live 2026-08-19 this was too tight: a
+        // reasoning sentence occasionally ran past the cap, truncating the
+        // response mid-JSON and throwing "Unexpected end of JSON input" on
+        // parse, which forces the fail-closed mechanical fallback (a real
+        // stop-loss fired this way on a token that mooned right after,
+        // with the AI never actually getting to weigh in).
+        max_tokens: 300,
         system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content: userPrompt }],
       }),

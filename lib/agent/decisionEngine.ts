@@ -91,7 +91,12 @@ async function attemptDecision(input: DecisionInput, userPrompt: string): Promis
       },
       body: JSON.stringify({
         model: 'claude-sonnet-5',
-        max_tokens: 200,
+        // Was 200 - same truncation risk confirmed live on
+        // exitDecisionEngine.ts's identical pattern (a reasoning sentence
+        // occasionally running past the cap, truncating mid-JSON and
+        // throwing "Unexpected end of JSON input" on parse, which forces
+        // the fail-closed fallback here too).
+        max_tokens: 300,
         system: SYSTEM_PROMPT,
         messages: [{ role: 'user', content: userPrompt }],
       }),
