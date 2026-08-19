@@ -96,6 +96,64 @@ export async function getLatestAgentDecisionForPool(detectedPoolId: number): Pro
   return rows[0] ? localDb.rowToAgentDecision(rows[0]) : null;
 }
 
+// Batched equivalents of the three functions above - app/api/pools/route.ts
+// used to call the single-pool versions once per pool (a real N+1: up to
+// `limit` pools x 3 queries each = 300+ separate Turso round-trips per page
+// load). Each of these does ONE query with `detected_pool_id IN (...)`
+// instead. The local (non-Turso) path stays a plain loop since it's
+// synchronous in-process SQLite - no network round-trip cost to batch away.
+export async function getPoolFilterResultsBatch(poolIds: number[]): Promise<Map<number, FilterOutcome[]>> {
+  const map = new Map<number, FilterOutcome[]>();
+  if (poolIds.length === 0) return map;
+  if (!isReadOnlyDeployment()) {
+    for (const id of poolIds) map.set(id, localDb.getPoolFilterResults(id));
+    return map;
+  }
+  const placeholders = poolIds.map(() => '?').join(',');
+  const rows = await tursoRows(`SELECT * FROM filter_results WHERE detected_pool_id IN (${placeholders}) ORDER BY checked_at ASC`, poolIds);
+  for (const row of rows) {
+    const outcome = localDb.rowToFilterOutcome(row);
+    const list = map.get(outcome.detectedPoolId);
+    if (list) list.push(outcome);
+    else map.set(outcome.detectedPoolId, [outcome]);
+  }
+  return map;
+}
+
+export async function getLatestMomentumSnapshotsBatch(poolIds: number[]): Promise<Map<number, MomentumSnapshot>> {
+  const map = new Map<number, MomentumSnapshot>();
+  if (poolIds.length === 0) return map;
+  if (!isReadOnlyDeployment()) {
+    for (const id of poolIds) {
+      const s = localDb.getLatestMomentumSnapshot(id);
+      if (s) map.set(id, s);
+    }
+    return map;
+  }
+  const placeholders = poolIds.map(() => '?').join(',');
+  // Ascending order + overwrite-on-insert: the last row seen per pool in
+  // the loop is the latest one, without needing a window function/subquery.
+  const rows = await tursoRows(`SELECT * FROM momentum_snapshots WHERE detected_pool_id IN (${placeholders}) ORDER BY checked_at ASC`, poolIds);
+  for (const row of rows) map.set(row.detected_pool_id, localDb.rowToMomentumSnapshot(row));
+  return map;
+}
+
+export async function getLatestAgentDecisionsBatch(poolIds: number[]): Promise<Map<number, AgentDecision>> {
+  const map = new Map<number, AgentDecision>();
+  if (poolIds.length === 0) return map;
+  if (!isReadOnlyDeployment()) {
+    for (const id of poolIds) {
+      const d = localDb.getLatestAgentDecisionForPool(id);
+      if (d) map.set(id, d);
+    }
+    return map;
+  }
+  const placeholders = poolIds.map(() => '?').join(',');
+  const rows = await tursoRows(`SELECT * FROM agent_decisions WHERE detected_pool_id IN (${placeholders}) ORDER BY checked_at ASC`, poolIds);
+  for (const row of rows) map.set(row.detected_pool_id, localDb.rowToAgentDecision(row));
+  return map;
+}
+
 export async function getLatestAgentDecisionBeforeBuy(detectedPoolId: number, boughtAt: number): Promise<AgentDecision | null> {
   if (!isReadOnlyDeployment()) return localDb.getLatestAgentDecisionBeforeBuy(detectedPoolId, boughtAt);
   const rows = await tursoRows(
@@ -134,11 +192,50 @@ export async function getPartialExitsForPosition(positionId: number): Promise<Pa
   return rows.map(localDb.rowToPartialExit);
 }
 
+// Batched: same N+1 reasoning as getFillsBatch above.
+export async function getPartialExitsBatch(positionIds: number[]): Promise<Map<number, PartialExit[]>> {
+  const map = new Map<number, PartialExit[]>();
+  if (positionIds.length === 0) return map;
+  if (!isReadOnlyDeployment()) {
+    for (const id of positionIds) map.set(id, localDb.getPartialExitsForPosition(id));
+    return map;
+  }
+  const placeholders = positionIds.map(() => '?').join(',');
+  const rows = await tursoRows(`SELECT * FROM partial_exits WHERE position_id IN (${placeholders}) ORDER BY closed_at ASC`, positionIds);
+  for (const row of rows) {
+    const exit = localDb.rowToPartialExit(row);
+    const list = map.get(row.position_id);
+    if (list) list.push(exit);
+    else map.set(row.position_id, [exit]);
+  }
+  return map;
+}
+
 export async function getFillById(id: number | null): Promise<SimulatedFill | null> {
   if (id === null) return null;
   if (!isReadOnlyDeployment()) return localDb.getFillById(id);
   const rows = await tursoRows(`SELECT * FROM fills WHERE id = ?`, [id]);
   return rows[0] ? localDb.rowToFill(rows[0]) : null;
+}
+
+// Batched: app/api/trades/route.ts needs both fills for EVERY closed
+// position it returns (up to `limit`, default 200) - one query per fill id
+// instead would be up to 400 separate Turso round-trips for that alone.
+export async function getFillsBatch(ids: (number | null)[]): Promise<Map<number, SimulatedFill>> {
+  const map = new Map<number, SimulatedFill>();
+  const realIds = ids.filter((id): id is number => id !== null);
+  if (realIds.length === 0) return map;
+  if (!isReadOnlyDeployment()) {
+    for (const id of realIds) {
+      const f = localDb.getFillById(id);
+      if (f) map.set(id, f);
+    }
+    return map;
+  }
+  const placeholders = realIds.map(() => '?').join(',');
+  const rows = await tursoRows(`SELECT * FROM fills WHERE id IN (${placeholders})`, realIds);
+  for (const row of rows) map.set(row.id, localDb.rowToFill(row));
+  return map;
 }
 
 export async function getEquitySnapshots(limit = 1000): Promise<EquitySnapshot[]> {

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getLatestAgentDecisionForPool, getLatestMomentumSnapshot, getPoolFilterResults, getRecentPools } from '../../../lib/dbRead';
+import { getLatestAgentDecisionsBatch, getLatestMomentumSnapshotsBatch, getPoolFilterResultsBatch, getRecentPools } from '../../../lib/dbRead';
 
 export const dynamic = 'force-dynamic';
 
@@ -9,23 +9,21 @@ export async function GET(request: Request) {
   // Enriched with the momentum + AI-decision pipeline's latest state per
   // pool, so the dashboard's Watcher tab can show a token's whole lifecycle
   // (filters -> momentum -> revival -> degen score -> decision -> outcome)
-  // from this one endpoint - same N+1-per-row pattern this route already
-  // used for filterResults, `limit` keeps it bounded.
-  const enriched = await Promise.all(
-    pools.map(async (pool) => {
-      // The 3 sub-fetches are independent (different tables, same pool.id) -
-      // run them concurrently instead of sequentially. Each is a real
-      // network round trip against Turso in the hosted read-only deployment
-      // (lib/dbRead.ts), so this cuts this route's wall-clock duration to
-      // roughly 1/3 - Vercel's Fluid compute bills provisioned duration, not
-      // just CPU time, so a slow N+1 fan-out here directly inflates cost.
-      const [filterResults, latestMomentumSnapshot, latestAgentDecision] = await Promise.all([
-        getPoolFilterResults(pool.id),
-        getLatestMomentumSnapshot(pool.id),
-        getLatestAgentDecisionForPool(pool.id),
-      ]);
-      return { ...pool, filterResults, latestMomentumSnapshot, latestAgentDecision };
-    }),
-  );
+  // from this one endpoint. Batched (one query per sub-table, not one per
+  // pool) - the old per-pool Promise.all fan-out ran `limit` pools x 3
+  // queries EACH as separate Turso round-trips (300+ for a 100-pool page),
+  // which only got parallelized, never actually reduced in count.
+  const poolIds = pools.map((p) => p.id);
+  const [filterResultsByPool, momentumByPool, decisionByPool] = await Promise.all([
+    getPoolFilterResultsBatch(poolIds),
+    getLatestMomentumSnapshotsBatch(poolIds),
+    getLatestAgentDecisionsBatch(poolIds),
+  ]);
+  const enriched = pools.map((pool) => ({
+    ...pool,
+    filterResults: filterResultsByPool.get(pool.id) ?? [],
+    latestMomentumSnapshot: momentumByPool.get(pool.id) ?? null,
+    latestAgentDecision: decisionByPool.get(pool.id) ?? null,
+  }));
   return NextResponse.json({ pools: enriched });
 }
