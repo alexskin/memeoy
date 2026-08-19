@@ -920,10 +920,10 @@ async function main() {
   // No timer at all is created unless TURSO_DATABASE_URL is set - a user who
   // never sets it up sees zero behavior change here.
   if (tursoSyncEnabled()) {
-    logger.info({}, 'Turso sync enabled - mirroring a bounded recent window to Turso every 20s for the public dashboard');
+    logger.info({}, 'Turso sync enabled - incrementally mirroring the local DB to Turso every 60s for the public dashboard');
     setInterval(() => {
       runTursoSync().catch((error) => logger.warn({ error: String(error) }, 'tursoSync tick failed, will retry next tick'));
-    }, 20_000);
+    }, 60_000);
   }
 
   // ---- runner review (lib/agent/runnerReview.ts) ----
