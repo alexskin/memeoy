@@ -12,6 +12,7 @@ import { getDegenScore } from '../degenScore/client';
 import { decideCandidate } from '../agent/decisionEngine';
 import { summarizeMissedRunnersBySignal, summarizeRecentPerformanceBySignal } from '../agent/stats';
 import { getLastRunnerReviewStats } from '../agent/runnerReview';
+import { summarizeWalletReputation } from '../agent/walletReputation';
 import { getWatchlistPoolsBySource, insertAgentDecision, insertMomentumSnapshot, updatePoolStatus } from '../db';
 import { DetectedPool, StrategyConfig } from '../types';
 import { logger } from '../logger';
@@ -151,6 +152,7 @@ export class WatchlistMonitor {
                   degenScore: degen,
                   recentPerformance: summarizeRecentPerformanceBySignal(),
                   missedRunnerCalibration: summarizeMissedRunnersBySignal(getLastRunnerReviewStats()),
+                  walletReputationNote: summarizeWalletReputation(c.id),
                 })
               : {
                   action: 'buy' as const,

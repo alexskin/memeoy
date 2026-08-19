@@ -25,6 +25,7 @@ import {
   getPositionByDetectedPoolId,
   insertAgentSuggestion,
   insertConfigVersion,
+  markPoolAsConfirmedRunner,
   setMeta,
   updateAgentSuggestionStatus,
 } from '../db';
@@ -166,6 +167,11 @@ export async function computeRunnerReviewStats(config: StrategyConfig): Promise<
 
   const runners = contexts.filter((c) => c.isRunner);
   const nonRunners = contexts.filter((c) => !c.isRunner);
+
+  // Persist the classification (lib/agent/walletReputation.ts joins against
+  // this) - idempotent, harmless to re-mark the same pool across later
+  // review cycles while it's still in the lookback window.
+  for (const c of runners) markPoolAsConfirmedRunner(c.pool.id);
 
   function avgSnapshot(ctxs: PoolContext[], pick: (s: MomentumSnapshot) => number | null): number {
     return mean(ctxs.map((c) => (c.entrySnapshot ? pick(c.entrySnapshot) : null)).filter((v): v is number => v != null));
@@ -317,6 +323,17 @@ export function proposeChangesFromRunners(stats: RunnerReviewStats, config: Stra
           diff.momentumMaxDevHoldingPct = { old: config.momentumMaxDevHoldingPct, new: next };
           reasons.push(
             `devRisk passed for only ${(fp.runnerPassRate * 100).toFixed(0)}% of runners vs ${(fp.nonRunnerPassRate * 100).toFixed(0)}% of non-runners - raising the dev-holding cap ${config.momentumMaxDevHoldingPct}% -> ${next}%.`,
+          );
+        }
+      } else if (fp.filterName === 'freshWallet' && config.checkFreshWallet) {
+        // Small step size (0.08 vs. the usual 0.15) - BOUNDS caps this at
+        // 40% regardless, but even within that range the fresh-wallet ratio
+        // should move cautiously per the explicit "must stay low" decision.
+        const next = clampStep(config.momentumMaxFreshWalletPct, 1, 0.08, BOUNDS.momentumMaxFreshWalletPct);
+        if (next !== config.momentumMaxFreshWalletPct) {
+          diff.momentumMaxFreshWalletPct = { old: config.momentumMaxFreshWalletPct, new: next };
+          reasons.push(
+            `freshWallet passed for only ${(fp.runnerPassRate * 100).toFixed(0)}% of runners vs ${(fp.nonRunnerPassRate * 100).toFixed(0)}% of non-runners - raising the fresh-wallet cap ${config.momentumMaxFreshWalletPct}% -> ${next}% (small step, capped low by design).`,
           );
         }
       }

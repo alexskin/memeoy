@@ -13,7 +13,15 @@ import { getRiskInfo } from '../rugcheck/client';
 import { FilterResult } from './types';
 import { StrategyConfig } from '../types';
 
-export async function checkDevRisk(baseMint: string, excludeOwners: string[], config: StrategyConfig): Promise<FilterResult> {
+export interface DevRiskResult extends FilterResult {
+  /** Non-pool holder list from the same RugCheck fetch this filter already
+   *  made - undefined when the fetch failed. Returned so the caller can
+   *  persist a wallet-reputation snapshot and feed freshWalletFilter.ts
+   *  without a second RugCheck round-trip for the same report. */
+  holders?: { walletAddress: string; pct: number }[];
+}
+
+export async function checkDevRisk(baseMint: string, excludeOwners: string[], config: StrategyConfig): Promise<DevRiskResult> {
   const info = await getRiskInfo(baseMint, excludeOwners);
   if (info === null) {
     return { ok: false, message: 'DevRisk -> RugCheck data unavailable' };
@@ -25,5 +33,6 @@ export async function checkDevRisk(baseMint: string, excludeOwners: string[], co
   return {
     ok: devOk && top10Ok,
     message: `DevRisk -> dev holding ${info.devHoldingPct.toFixed(1)}% (max ${config.momentumMaxDevHoldingPct}%), top10 non-pool holders ${info.top10HoldersPct.toFixed(1)}% (max ${config.momentumMaxTop10HoldersPct}%)`,
+    holders: info.nonPoolHolders,
   };
 }

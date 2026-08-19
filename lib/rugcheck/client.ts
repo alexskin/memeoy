@@ -51,6 +51,11 @@ export interface InsiderInfo {
 export interface RiskInfo extends InsiderInfo {
   devHoldingPct: number;
   top10HoldersPct: number;
+  /** Non-pool holders (owner + pct), same list top10HoldersPct is derived
+   *  from - reused by devRiskFilter.ts to persist a snapshot (wallet
+   *  reputation tracking) and by freshWalletFilter.ts (avoids a second
+   *  RugCheck fetch of the same report). */
+  nonPoolHolders: { walletAddress: string; pct: number }[];
 }
 
 async function fetchJson<T>(url: string): Promise<T | null> {
@@ -134,5 +139,6 @@ export async function getRiskInfo(mint: string, excludeOwners: string[] = []): P
     insiderWalletCount: report.graphInsidersDetected ?? 0,
     devHoldingPct,
     top10HoldersPct,
+    nonPoolHolders: nonPoolHolders.map((h) => ({ walletAddress: h.owner, pct: h.pct })),
   };
 }

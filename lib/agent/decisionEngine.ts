@@ -37,6 +37,11 @@ export interface DecisionInput {
    * degen-score judgment missed a real runner before, by score bucket.
    * Advisory context only, same as recentPerformance - never a hard gate. */
   missedRunnerCalibration: string;
+  /** From lib/agent/walletReputation.ts::summarizeWalletReputation - whether
+   * this candidate's top holders have a track record showing up early in
+   * OUR OWN previously confirmed runners. Advisory context only, same as
+   * the two fields above - never a hard gate. */
+  walletReputationNote: string;
 }
 
 function describeQualification(momentumPass: boolean, revivalPass: boolean): string {
@@ -140,7 +145,8 @@ Revival criteria: ${JSON.stringify(input.revival.results)}
 Revival strength: ${input.revival.strengthScore}/100
 Degen score: ${input.degenScore ? `${input.degenScore.score}/100 - ${input.degenScore.verdict}` : 'not available (no social link found, or scoring failed)'}
 ${input.recentPerformance}
-${input.missedRunnerCalibration}`;
+${input.missedRunnerCalibration}
+${input.walletReputationNote}`;
 
   let lastError = '(no attempts made)';
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {

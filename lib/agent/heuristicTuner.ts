@@ -35,6 +35,10 @@ export const BOUNDS = {
   momentumMaxInsiderPct: [5, 40],
   momentumMaxDevHoldingPct: [5, 40],
   momentumMaxTop10HoldersPct: [15, 80],
+  // Capped low on purpose (explicit product decision, unlike the other caps
+  // above) - a fresh-wallet swarm is a strong bot/insider-sniping signal,
+  // so even runner-review evidence should never loosen this past 40%.
+  momentumMaxFreshWalletPct: [5, 40],
   // Revival gate (lib/dexscreener/revivalFilter.ts) is a deterministic
   // threshold gate exactly like the momentum bounds above, so it's tunable
   // the same way. degenScore/decisionEngine are NOT here - those are
