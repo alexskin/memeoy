@@ -229,14 +229,11 @@ export async function runTursoSync(): Promise<void> {
   await syncIncremental(client, 'equity_snapshots');
   await syncIncremental(client, 'wallet_alerts');
   await syncIncremental(client, 'creator_launches');
-  // Not pure-incremental: both mutate after insert (agent_suggestions'
-  // status flips on accept/reject; burn_alerts' burners_json fills in
-  // asynchronously later - see lib/burnTracker/burnWatcher.ts) and a row
-  // already synced once in its pre-mutation state would never get the
-  // update pushed otherwise. Both are tiny tables in practice, so a small
-  // bounded re-sync every tick is negligible cost.
+  // Not pure-incremental: mutates after insert (agent_suggestions' status
+  // flips on accept/reject) and a row already synced once in its
+  // pre-mutation state would never get the update pushed otherwise. A tiny
+  // table in practice, so a small bounded re-sync every tick is negligible cost.
   await syncQuery(client, 'agent_suggestions', `SELECT * FROM agent_suggestions ORDER BY id DESC LIMIT ?`, [SMALL_MUTABLE_TABLE_WINDOW]);
-  await syncQuery(client, 'burn_alerts', `SELECT * FROM burn_alerts ORDER BY id DESC LIMIT ?`, [SMALL_MUTABLE_TABLE_WINDOW]);
   await syncQuery(
     client,
     'meta',

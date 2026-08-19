@@ -28,7 +28,8 @@ const STATEMENTS = [
     pool_open_time INTEGER,
     detected_at INTEGER NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
-    source TEXT NOT NULL DEFAULT 'raydium'
+    source TEXT NOT NULL DEFAULT 'raydium',
+    confirmed_runner INTEGER NOT NULL DEFAULT 0
   )`,
   `CREATE INDEX IF NOT EXISTS idx_detected_pools_detected_at ON detected_pools(detected_at)`,
   `CREATE TABLE IF NOT EXISTS filter_results (

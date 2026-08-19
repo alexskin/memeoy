@@ -16,7 +16,14 @@ import { logger } from '../logger';
 // volume roughly in proportion to how much of that overlap exists, with no
 // change needed to the loop/orchestration logic itself (a 400ms coalescing
 // delay is immaterial against a 3s+ poll interval).
-const BATCH_WINDOW_MS = 400;
+// Widened from 400ms (was: real observed batching only cut ~24% off raw
+// check volume - 21.5K checks/day -> 16.4K real calls/day, still the
+// dominant RPC cost in the system) - checks for the same pool are already
+// spaced filterCheckIntervalMs (3s+) apart by design, so a window this much
+// smaller than that interval was leaving a lot of coalescing opportunity
+// against OTHER pools' concurrent checks on the table. 2s adds negligible
+// extra latency against a 45s+ total detection window.
+const BATCH_WINDOW_MS = 2000;
 
 class MintAccountBatcher {
   private pending = new Map<string, { mint: PublicKey; resolvers: ((info: AccountInfo<Buffer> | null) => void)[] }>();

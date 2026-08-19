@@ -221,6 +221,22 @@ export function migrate(db: Database.Database) {
       config_version_id INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_premigration_snapshots_pool ON premigration_snapshots(detected_pool_id);
+
+    -- Wallet-reputation tracking (lib/agent/walletReputation.ts): a snapshot
+    -- of each candidate's non-pool top holders at devRisk-check time, joined
+    -- later against detected_pools.confirmed_runner to see which wallets
+    -- keep showing up early in tokens that turned into real runners. No new
+    -- RPC cost - reuses the RugCheck holder list devRiskFilter.ts already
+    -- fetches for its own pass/fail check.
+    CREATE TABLE IF NOT EXISTS pool_holder_snapshots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      detected_pool_id INTEGER NOT NULL REFERENCES detected_pools(id),
+      wallet_address TEXT NOT NULL,
+      pct REAL NOT NULL,
+      snapshotted_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_pool_holder_snapshots_pool ON pool_holder_snapshots(detected_pool_id);
+    CREATE INDEX IF NOT EXISTS idx_pool_holder_snapshots_wallet ON pool_holder_snapshots(wallet_address);
   `);
 
   db.prepare(`INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '1')`).run();
@@ -258,13 +274,20 @@ export function migrate(db: Database.Database) {
   // AI exit review (lib/agent/exitDecisionEngine.ts) - set only when status = 'closed_ai_exit'.
   addColumnIfMissing(db, 'positions', 'ai_exit_reasoning', `ai_exit_reasoning TEXT`);
 
-  // Burner wallet attribution (lib/burnTracker/burnWatcher.ts) - filled in
-  // asynchronously after the alert already fired, since on-chain lookup is
-  // slow on high-volume mints.
+  // Burner wallet attribution - was filled in asynchronously by the
+  // burn-tracking feature (removed 2026-08-19, see git history) after an
+  // alert already fired. burn_alerts table kept as-is (historical data,
+  // not dropped) even though nothing writes to it anymore.
   addColumnIfMissing(db, 'burn_alerts', 'burners_json', `burners_json TEXT`);
 
   // Market cap at scan time (components/dashboard/WatcherTable.tsx).
   addColumnIfMissing(db, 'momentum_snapshots', 'market_cap_usd', `market_cap_usd REAL`);
+
+  // Set by lib/agent/runnerReview.ts's periodic scan when a pool's price
+  // action crosses the runner threshold - persisted (not just returned in
+  // RunnerReviewStats) so wallet-reputation lookups can join against it
+  // without recomputing "was this pool a runner" from scratch each time.
+  addColumnIfMissing(db, 'detected_pools', 'confirmed_runner', `confirmed_runner INTEGER NOT NULL DEFAULT 0`);
 }
 
 function columnExists(db: Database.Database, table: string, columnName: string): boolean {

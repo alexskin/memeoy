@@ -13,7 +13,6 @@ import {
   AgentDecisionDetailed,
   AgentSuggestion,
   AgentSuggestionStatus,
-  BurnAlert,
   CreatorLaunch,
   DetectedPool,
   EquitySnapshot,
@@ -247,6 +246,62 @@ export function getWatchlistPoolsBySource(sources: Venue[]): DetectedPool[] {
     .prepare(`SELECT * FROM detected_pools WHERE status = 'watching' AND source IN (${placeholders}) ORDER BY detected_at ASC`)
     .all(...sources)
     .map(rowToDetectedPool);
+}
+
+// Set by lib/agent/runnerReview.ts's periodic scan once a pool's price
+// action crosses the runner threshold - idempotent, safe to call again on
+// the same pool across later review cycles while it's still in the window.
+export function markPoolAsConfirmedRunner(detectedPoolId: number) {
+  getDb().prepare(`UPDATE detected_pools SET confirmed_runner = 1 WHERE id = ?`).run(detectedPoolId);
+}
+
+// ---------- pool holder snapshots (wallet reputation) ----------
+
+// Persists the non-pool top-holder list devRiskFilter.ts already fetched
+// from RugCheck for its own pass/fail check - no new RPC/HTTP cost. Read
+// back later two ways: getPoolHolderSnapshot (this pool's own holders, at
+// decision time) and getWalletReputationCounts (cross-pool, "has this
+// wallet shown up in a confirmed runner before").
+export function insertPoolHolderSnapshots(detectedPoolId: number, holders: { walletAddress: string; pct: number }[], snapshottedAt: number) {
+  if (holders.length === 0) return;
+  const insert = getDb().prepare(
+    `INSERT INTO pool_holder_snapshots (detected_pool_id, wallet_address, pct, snapshotted_at) VALUES (?, ?, ?, ?)`,
+  );
+  const insertMany = getDb().transaction((rows: typeof holders) => {
+    for (const h of rows) insert.run(detectedPoolId, h.walletAddress, h.pct, snapshottedAt);
+  });
+  insertMany(holders);
+}
+
+export function getPoolHolderSnapshot(detectedPoolId: number): { walletAddress: string; pct: number }[] {
+  return getDb()
+    .prepare(`SELECT wallet_address as walletAddress, pct FROM pool_holder_snapshots WHERE detected_pool_id = ?`)
+    .all(detectedPoolId) as { walletAddress: string; pct: number }[];
+}
+
+// For each given wallet: how many distinct pools it's shown up as a
+// snapshotted top holder in (seenCount), and how many of those pools were
+// later confirmed runners (runnerCount) - the raw counts
+// lib/agent/walletReputation.ts turns into an advisory prompt line.
+export function getWalletReputationCounts(walletAddresses: string[]): Map<string, { seenCount: number; runnerCount: number }> {
+  const result = new Map<string, { seenCount: number; runnerCount: number }>();
+  if (walletAddresses.length === 0) return result;
+
+  const placeholders = walletAddresses.map(() => '?').join(',');
+  const rows = getDb()
+    .prepare(
+      `SELECT phs.wallet_address as walletAddress,
+              COUNT(DISTINCT phs.detected_pool_id) as seenCount,
+              COUNT(DISTINCT CASE WHEN dp.confirmed_runner = 1 THEN phs.detected_pool_id END) as runnerCount
+       FROM pool_holder_snapshots phs
+       JOIN detected_pools dp ON dp.id = phs.detected_pool_id
+       WHERE phs.wallet_address IN (${placeholders})
+       GROUP BY phs.wallet_address`,
+    )
+    .all(...walletAddresses) as { walletAddress: string; seenCount: number; runnerCount: number }[];
+
+  for (const row of rows) result.set(row.walletAddress, { seenCount: row.seenCount, runnerCount: row.runnerCount });
+  return result;
 }
 
 // ---------- momentum snapshots ----------
@@ -971,31 +1026,3 @@ export function rowToCreatorLaunch(row: any): CreatorLaunch {
   };
 }
 
-export function insertBurnAlert(b: Omit<BurnAlert, 'id'>): number {
-  const info = getDb()
-    .prepare(
-      `INSERT INTO burn_alerts (mint, burned_amount, supply_after, detected_at)
-       VALUES (@mint, @burnedAmount, @supplyAfter, @detectedAt)`,
-    )
-    .run(b);
-  return info.lastInsertRowid as number;
-}
-
-export function getRecentBurnAlerts(limit = 100): BurnAlert[] {
-  return getDb().prepare(`SELECT * FROM burn_alerts ORDER BY detected_at DESC LIMIT ?`).all(limit).map(rowToBurnAlert);
-}
-
-export function updateBurnAlertBurners(id: number, burners: { address: string; amount: number }[]): void {
-  getDb().prepare(`UPDATE burn_alerts SET burners_json = ? WHERE id = ?`).run(JSON.stringify(burners), id);
-}
-
-export function rowToBurnAlert(row: any): BurnAlert {
-  return {
-    id: row.id,
-    mint: row.mint,
-    burnedAmount: row.burned_amount,
-    supplyAfter: row.supply_after,
-    detectedAt: row.detected_at,
-    burners: row.burners_json ? JSON.parse(row.burners_json) : undefined,
-  };
-}

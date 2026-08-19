@@ -20,16 +20,16 @@ export const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
   autoSellDelayMs: 0,
   maxSellRetries: 10,
   sellSlippagePct: 20,
-  // Was 2000 - this is the single largest source of sustained RPC volume in
-  // the whole bot (one mark-to-market quote per open position, every tick,
-  // 24/7, for as long as a position stays open), so it's the first lever
-  // worth pulling when RPC budget is the constraint. Combined with the
-  // pumpswap price source's own call-count halving (see
-  // lib/pumpswap/priceSource.ts), this roughly triples the effective
-  // time-between-RPC-bursts without meaningfully slowing stop-loss/
-  // take-profit reaction time for a bot that typically holds positions for
-  // minutes, not seconds.
-  priceCheckIntervalMs: 3000,
+  // Raised from 3000 (was 2000 before that) after a real Chainstack monthly
+  // RU-quota exhaustion (2026-08-19) - this is the single largest source of
+  // sustained RPC volume in the whole bot (one mark-to-market quote per open
+  // position, EVERY tick, 24/7, for as long as a position stays open: at the
+  // old 3000ms this alone projected to ~260K credits/month PER average
+  // concurrently-open position, easily dwarfing every other RPC source
+  // combined once more than 1-2 positions are open on average). First lever
+  // to pull whenever RPC budget is the constraint - still comfortably fast
+  // for a bot that typically holds positions for minutes, not seconds.
+  priceCheckIntervalMs: 10_000,
   // Hard safety cap even in trailing mode - raised from the reference bot's
   // 10min default to give a genuine pump more room to keep running.
   priceCheckDurationMs: 1_200_000,
@@ -84,6 +84,13 @@ export const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
   checkDevRisk: true,
   momentumMaxDevHoldingPct: 15,
   momentumMaxTop10HoldersPct: 45,
+
+  // Low by explicit design - see lib/types.ts's comment. ~15 RPC calls per
+  // candidate that reaches this stage (small population - only candidates
+  // already past holderConcentration/insiderConcentration/devRisk).
+  checkFreshWallet: true,
+  momentumMaxFreshWalletPct: 30,
+  freshWalletMaxAgeHours: 72,
 
   // Originally mirrored the user's DexScreener /new-pairs reference screener
   // 1:1 (minLiq=10000, min1HBuys=50, min24HVol=100000, ...), but that's tuned
@@ -214,11 +221,6 @@ export const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
   // Discord + dashboard alert the instant they create a brand-new pump.fun
   // token, before it's even migrated - see lib/pumpfun/createEventDecoder.ts.
   trackedCreators: [],
-
-  // Burn tracking - empty by default. thresholdTokens is a plain token
-  // count, computed once from a USD target at setup time (price-at-setup),
-  // not re-converted live.
-  trackedBurnMints: [],
 
   // Pre-migration pump.fun growth watchlist - off by default until the
   // worker has live RPC access to verify creation detection actually works

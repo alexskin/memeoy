@@ -23,8 +23,7 @@ import { logger } from '../logger';
 let _connection: Connection | null = null;
 
 // Only the known-heavy, known-async READ methods this codebase actually
-// calls (see lib/filters/*, lib/burnTracker/burnWatcher.ts,
-// lib/pumpswap/priceSource.ts, ...) - an explicit allowlist rather than
+// calls (see lib/filters/*, lib/pumpswap/priceSource.ts, ...) - an explicit allowlist rather than
 // "everything except sends", so WebSocket subscription methods (onLogs,
 // onProgramAccountChange, ...), which return a subscription id
 // SYNCHRONOUSLY, are never accidentally wrapped into a Promise and broken,

@@ -124,6 +124,19 @@ export interface StrategyConfig {
   momentumMaxDevHoldingPct: number;
   momentumMaxTop10HoldersPct: number;
 
+  // Fresh-wallet ratio among a candidate's top holders - a swarm of newly
+  // created wallets buying in sync is a bot/insider-sniping signature that
+  // none of the checks above catch (each wallet can look individually
+  // clean). Needs real on-chain history per wallet (RugCheck has no
+  // wallet-age field) - see lib/filters/freshWalletFilter.ts for the RPC
+  // cost tradeoff. Explicit product decision: this must stay a LOW cap
+  // (max % of holders allowed to be fresh), not a lenient one.
+  checkFreshWallet: boolean;
+  momentumMaxFreshWalletPct: number;
+  /** A holder wallet counts as "fresh" if its oldest visible signature is
+   *  within this many hours of now. */
+  freshWalletMaxAgeHours: number;
+
   // Momentum watchlist - replaces instant-buy. A candidate that passes the
   // safety filters above goes onto a watchlist instead of being bought
   // immediately; these thresholds (mirroring a DexScreener "new pairs"
@@ -248,14 +261,6 @@ export interface StrategyConfig {
   // pumpfunPremigrationEnabled trading is on. Empty array disables it.
   trackedCreators: string[];
 
-  // Burn tracking: alerts (Discord + dashboard, never trades) when a
-  // tracked mint's on-chain total supply drops by at least thresholdTokens
-  // since the last poll (lib/burnTracker/burnWatcher.ts). thresholdTokens
-  // is a plain token-count, not USD - the caller is expected to convert a
-  // dollar target to a token amount once at setup time using the price at
-  // that moment (no live USD conversion per check). Empty array disables it.
-  trackedBurnMints: { mint: string; thresholdTokens: number }[];
-
   // Pre-migration pump.fun growth watchlist (lib/watchlist/
   // premigrationWatchlistMonitor.ts): a SEPARATE cohort from the
   // PumpSwap/Raydium momentum watchlist above - candidates here are
@@ -340,22 +345,6 @@ export interface CreatorLaunch {
   detectedAt: number;
 }
 
-// A large burn detected for a tracked mint - see lib/burnTracker/burnWatcher.ts.
-// Polls the mint's on-chain total supply (connection.getTokenSupply) rather
-// than parsing raw Burn-instruction logs (which carry no amount data) -
-// supply going down IS the burn, for any token whose mint authority is
-// renounced (the pump.fun norm), no per-transaction log decoding needed.
-export interface BurnAlert {
-  id: number;
-  mint: string;
-  burnedAmount: number;
-  supplyAfter: number;
-  detectedAt: number;
-  // Filled in asynchronously after the alert fires (on-chain transaction
-  // attribution is slow on high-volume mints) - undefined/empty until the
-  // burnWatcher's follow-up lookup resolves.
-  burners?: { address: string; amount: number }[];
-}
 
 export interface MomentumCriterionResult {
   criterionName:
@@ -455,7 +444,7 @@ export interface PremigrationSnapshot {
 
 export interface FilterOutcome {
   detectedPoolId: number;
-  filterName: 'burn' | 'renouncedFreeze' | 'poolSize' | 'mutable' | 'holderConcentration' | 'insiderConcentration' | 'devRisk';
+  filterName: 'burn' | 'renouncedFreeze' | 'poolSize' | 'mutable' | 'holderConcentration' | 'insiderConcentration' | 'devRisk' | 'freshWallet';
   pass: boolean;
   message?: string;
   attemptNumber: number;

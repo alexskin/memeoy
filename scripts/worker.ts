@@ -61,6 +61,7 @@ import {
   insertDetectedPool,
   insertFilterResult,
   insertFill,
+  insertPoolHolderSnapshots,
   setMeta,
   updatePoolStatus,
 } from '../lib/db';
@@ -72,9 +73,9 @@ import { acquireWorkerLock } from '../lib/workerLock';
 import { checkHolderConcentration } from '../lib/filters/holderConcentrationFilter';
 import { checkInsiderConcentration } from '../lib/filters/insiderFilter';
 import { checkDevRisk } from '../lib/filters/devRiskFilter';
+import { checkFreshWallet } from '../lib/filters/freshWalletFilter';
 import { WatchlistMonitor } from '../lib/watchlist/watchlistMonitor';
 import { WalletWatcher } from '../lib/walletTracker/walletWatcher';
-import { BurnWatcher } from '../lib/burnTracker/burnWatcher';
 import { rebuildPriceSourceForPool } from '../lib/solana/rebuildPriceSource';
 import { resolveRiskParams } from '../lib/portfolio/riskParams';
 import { PumpSwapPool, decodePoolAccount } from '../lib/pumpswap/state';
@@ -167,7 +168,6 @@ async function main() {
   const poolCache = new PoolCache();
   const positionMonitor = new PositionMonitor(getActiveConfig, broadcast);
   const walletWatcher = new WalletWatcher(getActiveConfig, broadcast);
-  const burnWatcher = new BurnWatcher(connection, getActiveConfig, broadcast);
 
   // Re-attach positions that were left open by a previous run. pump.fun and
   // pumpswap positions carry everything needed to rebuild a PriceSource
@@ -340,6 +340,33 @@ async function main() {
         updatePoolStatus(ctx.detectedPoolId, 'rejected');
         broadcast('pool.status', { id: ctx.detectedPoolId, status: 'rejected' });
         return;
+      }
+
+      // Persist regardless of freshWallet being enabled - wallet-reputation
+      // tracking (lib/agent/walletReputation.ts) reuses this snapshot for
+      // free, no extra RugCheck/RPC cost either way.
+      if (devRiskResult.holders) {
+        insertPoolHolderSnapshots(ctx.detectedPoolId, devRiskResult.holders, Date.now());
+      }
+
+      if (config.checkFreshWallet && devRiskResult.holders) {
+        const freshWalletResult = await checkFreshWallet(connection, devRiskResult.holders, config);
+        insertFilterResult({
+          detectedPoolId: ctx.detectedPoolId,
+          filterName: 'freshWallet',
+          pass: freshWalletResult.ok,
+          message: freshWalletResult.message,
+          attemptNumber: 1,
+          configVersionId: versionId,
+          checkedAt: Date.now(),
+        });
+        broadcast('filter.result', { detectedPoolId: ctx.detectedPoolId, filterName: 'freshWallet', pass: freshWalletResult.ok, message: freshWalletResult.message });
+
+        if (!freshWalletResult.ok) {
+          updatePoolStatus(ctx.detectedPoolId, 'rejected');
+          broadcast('pool.status', { id: ctx.detectedPoolId, status: 'rejected' });
+          return;
+        }
       }
     }
 
@@ -836,6 +863,30 @@ async function main() {
         broadcast('pool.status', { id: detectedPoolId, status: 'rejected' });
         return;
       }
+
+      if (devRiskResult.holders) {
+        insertPoolHolderSnapshots(detectedPoolId, devRiskResult.holders, Date.now());
+      }
+
+      if (config.checkFreshWallet && devRiskResult.holders) {
+        const freshWalletResult = await checkFreshWallet(connection, devRiskResult.holders, config);
+        insertFilterResult({
+          detectedPoolId,
+          filterName: 'freshWallet',
+          pass: freshWalletResult.ok,
+          message: freshWalletResult.message,
+          attemptNumber: 1,
+          configVersionId: versionId,
+          checkedAt: Date.now(),
+        });
+        broadcast('filter.result', { detectedPoolId, filterName: 'freshWallet', pass: freshWalletResult.ok, message: freshWalletResult.message });
+
+        if (!freshWalletResult.ok) {
+          updatePoolStatus(detectedPoolId, 'rejected');
+          broadcast('pool.status', { id: detectedPoolId, status: 'rejected' });
+          return;
+        }
+      }
     }
 
     updatePoolStatus(detectedPoolId, 'watching');
@@ -881,14 +932,12 @@ async function main() {
     watchlistMonitor.start();
     premigrationWatchlistMonitor.start();
     walletWatcher.start();
-    burnWatcher.start();
   }
 
   async function stopDiscovery() {
     watchlistMonitor.stop();
     premigrationWatchlistMonitor.stop();
     walletWatcher.stop();
-    burnWatcher.stop();
     await listeners.stop();
     await pumpFunListener.stop();
   }
