@@ -145,10 +145,23 @@ export async function runTursoSync(): Promise<void> {
     .prepare(`SELECT * FROM agent_decisions WHERE id > ? ORDER BY id ASC LIMIT ?`)
     .all(agentDecisionsLastId, CATCHUP_BATCH_SIZE) as any[];
 
+  // Also FK-dependent on detected_pools, same as the three above - pulled
+  // up here (not the generic syncIncremental helper) so its referenced pool
+  // ids feed the same referencedPoolIds set. Missing this was a real bug:
+  // momentum_snapshots is by far the highest-volume child table, so leaving
+  // it out of the FK-safety net meant its batch could reference a pool
+  // detected_pools hadn't synced yet, failing the whole batch with
+  // "FOREIGN KEY constraint failed" (confirmed live 2026-08-19).
+  const momentumSnapshotsLastId = getLastSyncedId('momentum_snapshots');
+  const momentumSnapshotsRows = db
+    .prepare(`SELECT * FROM momentum_snapshots WHERE id > ? ORDER BY id ASC LIMIT ?`)
+    .all(momentumSnapshotsLastId, CATCHUP_BATCH_SIZE) as any[];
+
   const referencedPoolIds = new Set<number>();
   for (const r of positionsRows) if (r.detected_pool_id != null) referencedPoolIds.add(r.detected_pool_id);
   for (const r of filterResultsRows) referencedPoolIds.add(r.detected_pool_id);
   for (const r of agentDecisionsRows) referencedPoolIds.add(r.detected_pool_id);
+  for (const r of momentumSnapshotsRows) referencedPoolIds.add(r.detected_pool_id);
   const poolIdList = [...referencedPoolIds];
   const poolIdPlaceholder = poolIdList.length > 0 ? poolIdList.map(() => '?').join(',') : 'NULL';
 
@@ -187,7 +200,9 @@ export async function runTursoSync(): Promise<void> {
   if (await pushRows(client, 'filter_results', filterResultsRows)) {
     if (filterResultsRows.length > 0) setLastSyncedId('filter_results', filterResultsRows[filterResultsRows.length - 1].id);
   }
-  await syncIncremental(client, 'momentum_snapshots');
+  if (await pushRows(client, 'momentum_snapshots', momentumSnapshotsRows)) {
+    if (momentumSnapshotsRows.length > 0) setLastSyncedId('momentum_snapshots', momentumSnapshotsRows[momentumSnapshotsRows.length - 1].id);
+  }
   if (await pushRows(client, 'agent_decisions', agentDecisionsRows)) {
     if (agentDecisionsRows.length > 0) setLastSyncedId('agent_decisions', agentDecisionsRows[agentDecisionsRows.length - 1].id);
   }
