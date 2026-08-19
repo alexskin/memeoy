@@ -42,6 +42,12 @@ export interface DecisionInput {
    * OUR OWN previously confirmed runners. Advisory context only, same as
    * the two fields above - never a hard gate. */
   walletReputationNote: string;
+  /** From lib/dexscreener/client.ts::getDexPaidStatus - whether the team
+   * paid DexScreener for Enhanced Token Info / a boost. Weak positive
+   * signal (serious teams often pay for visibility) but its absence is
+   * common even for legitimate tokens - advisory context only, never a
+   * hard gate, same as the fields above. */
+  dexPaidNote: string;
 }
 
 function describeQualification(momentumPass: boolean, revivalPass: boolean): string {
@@ -146,7 +152,8 @@ Revival strength: ${input.revival.strengthScore}/100
 Degen score: ${input.degenScore ? `${input.degenScore.score}/100 - ${input.degenScore.verdict}` : 'not available (no social link found, or scoring failed)'}
 ${input.recentPerformance}
 ${input.missedRunnerCalibration}
-${input.walletReputationNote}`;
+${input.walletReputationNote}
+${input.dexPaidNote}`;
 
   let lastError = '(no attempts made)';
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {

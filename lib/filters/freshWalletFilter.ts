@@ -25,8 +25,12 @@ const FRESH_WALLET_SAMPLE_SIZE = 15;
 // One bounded getSignaturesForAddress call per wallet rather than paginating
 // back to true genesis - a wallet with this many or more prior signatures
 // unambiguously has substantial history and can't be "fresh" regardless of
-// how old the oldest visible one is.
-const SIGNATURE_SAMPLE_LIMIT = 1000;
+// how old the oldest visible one is. Lowered from 1000 (2026-08-19): live on
+// Helius, firing FRESH_WALLET_SAMPLE_SIZE concurrent limit:1000 requests
+// (each a ~220KB response) per candidate consistently 500'd; 100 (~22KB
+// each) is still far more than enough to tell "fresh" from "not fresh" and
+// resolved it.
+const SIGNATURE_SAMPLE_LIMIT = 100;
 
 async function isWalletFresh(connection: Connection, walletAddress: string, maxAgeHours: number): Promise<boolean | null> {
   try {

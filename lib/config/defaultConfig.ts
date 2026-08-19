@@ -166,6 +166,7 @@ export const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
 
   degenScoreEnabled: true,
   decisionEngineEnabled: true,
+  checkDexPaidStatus: true,
 
   takeProfitTargets: [
     { pct: 20, sellFraction: 0.33 },

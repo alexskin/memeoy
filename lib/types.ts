@@ -194,6 +194,12 @@ export interface StrategyConfig {
   // instantly to the old deterministic "pass = buy" behavior.
   degenScoreEnabled: boolean;
   decisionEngineEnabled: boolean;
+  // Whether a candidate's team paid DexScreener for an Enhanced Token Info
+  // profile or a boost (lib/dexscreener/client.ts::getDexPaidStatus) - free
+  // official API, one call per decision-stage candidate. Advisory context
+  // for decisionEngine.ts only, same as degen score - absence is common for
+  // legitimate tokens too, so this is never a hard gate.
+  checkDexPaidStatus: boolean;
 
   // Multi-target scaled take-profit: sell a fraction of the ORIGINAL
   // position size at each pct level (ascending), before the exitStrategy

@@ -88,3 +88,55 @@ export async function getTokensBatch(chainId: string, addresses: string[]): Prom
 
   return result;
 }
+
+export interface DexPaidStatus {
+  /** An approved (paid, not just attempted/cancelled) "tokenProfile" order - DexScreener's ~$300 Enhanced Token Info product. */
+  hasApprovedProfile: boolean;
+  /** Any boost payment on record, active or expired - boosts are the separate, cheaper, repeatable "trending" product. */
+  hasAnyBoost: boolean;
+}
+
+// GET /orders/v1/{chainId}/{tokenAddress} - confirmed live 2026-08-19: a
+// token with no paid orders returns {orders:[],boosts:[]}; a real paid one
+// returns e.g. {orders:[{type:"tokenProfile",status:"approved",...}],
+// boosts:[{amount:10,...}]}. No batch variant (one mint per call) - fine
+// since this only ever runs on the small late-stage candidate population
+// (same as devRisk/freshWallet), not every raw detection. Reuses the shared
+// dexScreenerRateLimiter rather than a second limiter - conservative, and
+// real call volume here is small regardless.
+// Advisory-only prompt line for decisionEngine.ts, same convention as
+// lib/agent/stats.ts's summarize*BySignal functions - a paid profile/boost
+// is a weak positive signal, never a hard gate (plenty of legitimate tokens
+// never bother paying for visibility).
+export function summarizeDexPaidStatus(status: DexPaidStatus | null): string {
+  if (!status) return 'DexScreener paid-status: unavailable (lookup failed or not indexed yet).';
+  if (status.hasApprovedProfile && status.hasAnyBoost) return 'DexScreener paid-status: team paid for BOTH an Enhanced Token Info profile and a boost - a real money commitment to visibility.';
+  if (status.hasApprovedProfile) return 'DexScreener paid-status: team paid for an approved Enhanced Token Info profile.';
+  if (status.hasAnyBoost) return 'DexScreener paid-status: team paid for a boost (no profile purchase on record).';
+  return 'DexScreener paid-status: no paid profile or boost on record - common for both legit and rug tokens alike, so absence alone proves nothing.';
+}
+
+export async function getDexPaidStatus(chainId: string, mint: string): Promise<DexPaidStatus | null> {
+  return dexScreenerRateLimiter.schedule(async () => {
+    const url = `${API_BASE}/orders/v1/${chainId}/${mint}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      if (!response.ok) {
+        logger.warn({ status: response.status, mint }, 'DexScreener orders request failed');
+        return null;
+      }
+      const json = (await response.json()) as { orders?: { type: string; status: string }[]; boosts?: unknown[] };
+      return {
+        hasApprovedProfile: (json.orders ?? []).some((o) => o.type === 'tokenProfile' && o.status === 'approved'),
+        hasAnyBoost: (json.boosts ?? []).length > 0,
+      };
+    } catch (error) {
+      logger.warn({ error: String(error), mint }, 'DexScreener orders request failed');
+      return null;
+    } finally {
+      clearTimeout(timer);
+    }
+  });
+}

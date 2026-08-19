@@ -52,9 +52,11 @@ import { logger } from '../lib/logger';
 import {
   getActiveConfigVersion,
   getDetectedPoolById,
+  getLatestAgentDecisionForPool,
   getMeta,
   getOpenPositions,
   getPartialExitsForPosition,
+  getPoolFilterResults,
   getSellAllRequestedAt,
   getWorkerControlState,
   insertCreatorLaunch,
@@ -85,8 +87,9 @@ import { PumpFunListener } from '../lib/pumpfun/listener';
 import { PumpFunCreateEvent } from '../lib/pumpfun/createEventDecoder';
 import { PumpFunFilters } from '../lib/filters/pumpFunFilters';
 import { PremigrationWatchlistMonitor } from '../lib/watchlist/premigrationWatchlistMonitor';
-import { sendDiscordNotification, formatPositionOpenedMessage } from '../lib/notify/discord';
-import { getTokensBatch } from '../lib/dexscreener/client';
+import { sendDiscordNotification, sendDiscordEmbed, buildPositionOpenedEmbed } from '../lib/notify/discord';
+import { getTokensBatch, getDexPaidStatus } from '../lib/dexscreener/client';
+import { summarizeWalletReputation } from '../lib/agent/walletReputation';
 import { DetectedPool } from '../lib/types';
 import { getLiveWallet } from '../lib/solana/wallet';
 import { initializeLiveBalance } from '../lib/portfolio/liveBalance';
@@ -475,17 +478,27 @@ async function main() {
       'Simulated buy filled, position opened',
     );
 
-    void sendDiscordNotification(
-      formatPositionOpenedMessage({
-        baseMint: ctx.baseMint,
-        tokenName,
-        entryMarketCapUsd,
-        source: ctx.source,
-        quoteAmountUi: allInQuoteSizeUi,
-        entryPrice: outcome.finalFill.fillExecutionPrice!,
-        config,
-      }),
-    );
+    void (async () => {
+      const [filters, decision, dexPaid] = await Promise.all([
+        Promise.resolve(getPoolFilterResults(ctx.detectedPoolId)),
+        Promise.resolve(getLatestAgentDecisionForPool(ctx.detectedPoolId)),
+        config.checkDexPaidStatus ? getDexPaidStatus('solana', ctx.baseMint) : Promise.resolve(null),
+      ]);
+      await sendDiscordEmbed(
+        buildPositionOpenedEmbed({
+          baseMint: ctx.baseMint,
+          tokenName,
+          entryMarketCapUsd,
+          source: ctx.source,
+          quoteAmountUi: allInQuoteSizeUi,
+          config,
+          filters,
+          decision,
+          walletReputationNote: summarizeWalletReputation(ctx.detectedPoolId),
+          dexPaid,
+        }),
+      );
+    })().catch((error) => logger.warn({ error: String(error) }, 'Discord buy notification failed'));
 
     void maybeRunAgent(broadcast);
   }

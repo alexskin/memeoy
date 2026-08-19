@@ -8,7 +8,7 @@
 // has no venue-specific code at all.
 import { simulateSell, totalFeesPaid } from '../fillSimulator/fillSimulator';
 import { insertFill, updatePositionPeak, getPositionById } from '../db';
-import { sendDiscordNotification, formatPositionClosedMessage } from '../notify/discord';
+import { sendDiscordEmbed, buildPositionClosedEmbed } from '../notify/discord';
 import * as ledger from './ledger';
 import { PriceSource, uiAmountToRaw } from '../priceSource/types';
 import { PEAK_PROFIT_UNSET, PositionStatus, StrategyConfig } from '../types';
@@ -475,7 +475,7 @@ export class PositionMonitor {
       this.untrack(position.positionId);
       this.broadcast('position.closed', { positionId: position.positionId, status: 'closed_tp', realizedPnlQuote: result.realizedPnlQuote });
       const closedPosition = getPositionById(position.positionId);
-      if (closedPosition) void sendDiscordNotification(formatPositionClosedMessage(closedPosition));
+      if (closedPosition) void sendDiscordEmbed(buildPositionClosedEmbed(closedPosition));
     }
 
     return true;
@@ -539,7 +539,7 @@ export class PositionMonitor {
       aiExitReasoning,
     });
     const closedPosition = getPositionById(position.positionId);
-    if (closedPosition) void sendDiscordNotification(formatPositionClosedMessage(closedPosition));
+    if (closedPosition) void sendDiscordEmbed(buildPositionClosedEmbed(closedPosition));
 
     return true;
   }

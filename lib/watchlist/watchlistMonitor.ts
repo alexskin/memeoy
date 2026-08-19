@@ -4,7 +4,7 @@
 // lib/portfolio/positionMonitor.ts - mandatory, this is the exact bug class
 // that caused a real balance-corruption incident earlier this session when
 // a slow tick overlapped with the next timer fire.
-import { getTokensBatch } from '../dexscreener/client';
+import { getTokensBatch, getDexPaidStatus, summarizeDexPaidStatus } from '../dexscreener/client';
 import { evaluateMomentum } from '../dexscreener/momentumFilter';
 import { evaluateRevival } from '../dexscreener/revivalFilter';
 import { getSocialLinkFromPair } from '../filters/socialLink';
@@ -143,6 +143,7 @@ export class WatchlistMonitor {
 
           if (evaluation.pass || revival.pass) {
             const degen = config.degenScoreEnabled ? await getDegenScore(getSocialLinkFromPair(pair)) : null;
+            const dexPaidStatus = config.checkDexPaidStatus ? await getDexPaidStatus('solana', c.baseMint) : null;
 
             const decision = config.decisionEngineEnabled
               ? await decideCandidate({
@@ -153,6 +154,7 @@ export class WatchlistMonitor {
                   recentPerformance: summarizeRecentPerformanceBySignal(),
                   missedRunnerCalibration: summarizeMissedRunnersBySignal(getLastRunnerReviewStats()),
                   walletReputationNote: summarizeWalletReputation(c.id),
+                  dexPaidNote: config.checkDexPaidStatus ? summarizeDexPaidStatus(dexPaidStatus) : '',
                 })
               : {
                   action: 'buy' as const,
