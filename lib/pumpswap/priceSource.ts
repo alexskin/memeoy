@@ -36,6 +36,18 @@ export function getPumpSwapFeeBps(connection: Connection): Promise<number> {
   return cachedFeeBpsPromise;
 }
 
+// SPL Token account layout (classic + Token-2022 share this base layout):
+// amount is a u64 LE at byte offset 64. Reading it directly off a raw
+// AccountInfo lets both vault balances come back from ONE
+// getMultipleAccountsInfo call instead of two separate getTokenAccountBalance
+// round-trips - this runs on every position-monitor tick for every open
+// position (see lib/portfolio/positionMonitor.ts), so halving its RPC call
+// count directly halves the single largest source of sustained RPC volume
+// in the whole bot.
+function readTokenAccountAmount(data: Buffer): bigint {
+  return data.readBigUInt64LE(64);
+}
+
 // Synchronous factory - mirrors createRaydiumPriceSource's shape exactly,
 // taking an already-decoded pool (from the onProgramAccountChange callback
 // that detected it, or from rebuildPumpSwapPriceSource below). Each
@@ -55,15 +67,18 @@ export function createPumpSwapPriceSource(
     baseDecimals,
     quoteDecimals,
     async getQuote(direction, amountInRaw, slippagePct) {
-      const [baseBalance, quoteBalance, feeBps] = await Promise.all([
-        connection.getTokenAccountBalance(pool.poolBaseTokenAccount),
-        connection.getTokenAccountBalance(pool.poolQuoteTokenAccount),
+      const [vaultAccounts, feeBps] = await Promise.all([
+        connection.getMultipleAccountsInfo([pool.poolBaseTokenAccount, pool.poolQuoteTokenAccount]),
         getPumpSwapFeeBps(connection),
       ]);
+      const [baseVault, quoteVault] = vaultAccounts;
+      if (!baseVault?.data || !quoteVault?.data) {
+        throw new Error(`PumpSwap vault account(s) not found for pool ${pool.baseMint.toString()}`);
+      }
 
       return computePumpSwapQuote({
-        baseReserveRaw: BigInt(baseBalance.value.amount),
-        quoteReserveRaw: BigInt(quoteBalance.value.amount),
+        baseReserveRaw: readTokenAccountAmount(baseVault.data),
+        quoteReserveRaw: readTokenAccountAmount(quoteVault.data),
         direction,
         amountInRaw: BigInt(amountInRaw),
         slippagePct,

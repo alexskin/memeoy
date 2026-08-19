@@ -20,7 +20,16 @@ export const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
   autoSellDelayMs: 0,
   maxSellRetries: 10,
   sellSlippagePct: 20,
-  priceCheckIntervalMs: 2000,
+  // Was 2000 - this is the single largest source of sustained RPC volume in
+  // the whole bot (one mark-to-market quote per open position, every tick,
+  // 24/7, for as long as a position stays open), so it's the first lever
+  // worth pulling when RPC budget is the constraint. Combined with the
+  // pumpswap price source's own call-count halving (see
+  // lib/pumpswap/priceSource.ts), this roughly triples the effective
+  // time-between-RPC-bursts without meaningfully slowing stop-loss/
+  // take-profit reaction time for a bot that typically holds positions for
+  // minutes, not seconds.
+  priceCheckIntervalMs: 3000,
   // Hard safety cap even in trailing mode - raised from the reference bot's
   // 10min default to give a genuine pump more room to keep running.
   priceCheckDurationMs: 1_200_000,

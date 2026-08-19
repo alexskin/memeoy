@@ -47,7 +47,11 @@ const THROTTLED_METHODS = new Set([
 ]);
 
 function isRateLimitError(error: unknown): boolean {
-  return /429|rate.?limit|too many requests|requests per second|deprioritized/i.test(String(error));
+  // Covers both short-term throttling (429/RPS caps) and a plan's longer-
+  // window budget running out entirely (monthly compute/request-unit quota,
+  // "plan upgrade" style 403s) - both call for the same response: stop
+  // hammering the primary and let the fallback take this call instead.
+  return /429|403|rate.?limit|too many requests|requests per second|deprioritized|quota|request units?\b|plan upgrade/i.test(String(error));
 }
 
 function throttle(connection: Connection, limiter: RpcRateLimiter, fallback?: { connection: Connection; limiter: RpcRateLimiter; provider: string }): Connection {
