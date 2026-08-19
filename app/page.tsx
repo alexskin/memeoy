@@ -111,15 +111,16 @@ export default function Page() {
           break;
         }
         case 'momentum.updated': {
-          const { detectedPoolId, pass, results } = msg.payload as {
+          const { detectedPoolId, pass, results, marketCapUsd } = msg.payload as {
             detectedPoolId: number;
             pass: boolean;
             results: MomentumCriterionResult[];
+            marketCapUsd: number | null;
           };
           setPools((prev) =>
             prev.map((row) =>
               row.id === detectedPoolId && row.latestMomentumSnapshot
-                ? { ...row, latestMomentumSnapshot: { ...row.latestMomentumSnapshot, pass, criteria: results, hasData: true } }
+                ? { ...row, latestMomentumSnapshot: { ...row.latestMomentumSnapshot, pass, criteria: results, hasData: true, marketCapUsd } }
                 : row,
             ),
           );

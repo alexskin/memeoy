@@ -132,7 +132,8 @@ export function migrate(db: Database.Database) {
       has_data INTEGER NOT NULL,
       pass INTEGER NOT NULL,
       criteria_json TEXT NOT NULL,
-      config_version_id INTEGER NOT NULL
+      config_version_id INTEGER NOT NULL,
+      market_cap_usd REAL
     );
     CREATE INDEX IF NOT EXISTS idx_momentum_snapshots_pool ON momentum_snapshots(detected_pool_id);
 
@@ -261,6 +262,9 @@ export function migrate(db: Database.Database) {
   // asynchronously after the alert already fired, since on-chain lookup is
   // slow on high-volume mints.
   addColumnIfMissing(db, 'burn_alerts', 'burners_json', `burners_json TEXT`);
+
+  // Market cap at scan time (components/dashboard/WatcherTable.tsx).
+  addColumnIfMissing(db, 'momentum_snapshots', 'market_cap_usd', `market_cap_usd REAL`);
 }
 
 function columnExists(db: Database.Database, table: string, columnName: string): boolean {

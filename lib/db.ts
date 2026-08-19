@@ -256,10 +256,10 @@ export function insertMomentumSnapshot(s: Omit<MomentumSnapshot, 'id'>): number 
     .prepare(
       `INSERT INTO momentum_snapshots
        (detected_pool_id, checked_at, liquidity_usd, volume_24h_usd, buys_1h, buys_5m,
-        price_change_1h_pct, price_change_24h_pct, pair_age_minutes, has_data, pass, criteria_json, config_version_id)
+        price_change_1h_pct, price_change_24h_pct, pair_age_minutes, has_data, pass, criteria_json, config_version_id, market_cap_usd)
        VALUES
        (@detectedPoolId, @checkedAt, @liquidityUsd, @volume24hUsd, @buys1h, @buys5m,
-        @priceChange1hPct, @priceChange24hPct, @pairAgeMinutes, @hasData, @pass, @criteriaJson, @configVersionId)`,
+        @priceChange1hPct, @priceChange24hPct, @pairAgeMinutes, @hasData, @pass, @criteriaJson, @configVersionId, @marketCapUsd)`,
     )
     .run({
       detectedPoolId: s.detectedPoolId,
@@ -275,6 +275,7 @@ export function insertMomentumSnapshot(s: Omit<MomentumSnapshot, 'id'>): number 
       pass: s.pass ? 1 : 0,
       criteriaJson: JSON.stringify(s.criteria),
       configVersionId: s.configVersionId,
+      marketCapUsd: s.marketCapUsd,
     });
   return info.lastInsertRowid as number;
 }
@@ -295,6 +296,7 @@ export function rowToMomentumSnapshot(row: any): MomentumSnapshot {
     pass: !!row.pass,
     criteria: JSON.parse(row.criteria_json),
     configVersionId: row.config_version_id,
+    marketCapUsd: row.market_cap_usd ?? null,
   };
 }
 

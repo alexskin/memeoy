@@ -367,6 +367,8 @@ export interface MomentumSnapshot {
   pass: boolean;
   criteria: MomentumCriterionResult[];
   configVersionId: number;
+  /** From DexScreener at the moment of this scan (marketCap, falling back to fdv) - null if not yet indexed. */
+  marketCapUsd: number | null;
 }
 
 export interface RevivalCriterionResult {

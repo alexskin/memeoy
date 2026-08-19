@@ -123,8 +123,14 @@ export class WatchlistMonitor {
             pass: evaluation.pass,
             criteria: evaluation.results,
             configVersionId: versionId,
+            marketCapUsd: pair?.marketCap ?? pair?.fdv ?? null,
           });
-          this.broadcast('momentum.updated', { detectedPoolId: c.id, pass: evaluation.pass, results: evaluation.results });
+          this.broadcast('momentum.updated', {
+            detectedPoolId: c.id,
+            pass: evaluation.pass,
+            results: evaluation.results,
+            marketCapUsd: pair?.marketCap ?? pair?.fdv ?? null,
+          });
 
           // Revival is an ALTERNATE path to a buy, not a second gate stacked
           // on top of momentum - a genuine revival candidate is, by

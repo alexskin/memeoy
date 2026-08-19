@@ -25,11 +25,12 @@ const STATUS_BADGE: Record<string, string> = {
   watching: 'pending',
 };
 
-const VENUE_BADGE: Record<string, string> = {
-  raydium: 'neutral',
-  pumpfun: 'pending',
-  pumpswap: 'ok',
-};
+function formatMarketCap(mc: number | null | undefined): string {
+  if (mc == null) return '—';
+  if (mc >= 1_000_000) return `$${(mc / 1_000_000).toFixed(2)}M`;
+  if (mc >= 1_000) return `$${(mc / 1_000).toFixed(0)}K`;
+  return `$${mc.toFixed(0)}`;
+}
 
 function ageMinutesLabel(detectedAt: number): string {
   const minutes = (Date.now() - detectedAt) / 60_000;
@@ -65,8 +66,8 @@ export function WatcherTable({ rows }: { rows: WatcherRow[] }) {
         <tr>
           <th>Detected</th>
           <th>Age</th>
-          <th>Venue</th>
           <th>Mint</th>
+          <th>MC</th>
           <th>Filters</th>
           <th>Momentum</th>
           <th>Revival</th>
@@ -85,8 +86,8 @@ export function WatcherTable({ rows }: { rows: WatcherRow[] }) {
             <tr key={r.id}>
               <td>{new Date(r.detectedAt).toLocaleTimeString()}</td>
               <td>{ageMinutesLabel(r.detectedAt)}</td>
-              <td><span className={`badge ${VENUE_BADGE[r.source] ?? 'neutral'}`}>{r.source}</span></td>
               <td><CopyableCA address={r.baseMint} /></td>
+              <td style={{ whiteSpace: 'nowrap' }}>{formatMarketCap(m?.marketCapUsd)}</td>
               <td>
                 {latestPerFilter(r.filterResults).map((f) => (
                   <span key={f.filterName} className={`badge ${f.pass ? 'ok' : 'fail'}`} title={f.message} style={{ marginRight: 4 }}>

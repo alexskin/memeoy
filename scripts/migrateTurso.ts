@@ -140,7 +140,8 @@ const STATEMENTS = [
     has_data INTEGER NOT NULL,
     pass INTEGER NOT NULL,
     criteria_json TEXT NOT NULL,
-    config_version_id INTEGER NOT NULL
+    config_version_id INTEGER NOT NULL,
+    market_cap_usd REAL
   )`,
   `CREATE INDEX IF NOT EXISTS idx_momentum_snapshots_pool ON momentum_snapshots(detected_pool_id)`,
   `CREATE TABLE IF NOT EXISTS wallet_alerts (
@@ -231,6 +232,11 @@ async function main() {
   }
   try {
     await client.execute(`ALTER TABLE burn_alerts ADD COLUMN burners_json TEXT`);
+  } catch (error) {
+    if (!String(error).includes('duplicate column')) throw error;
+  }
+  try {
+    await client.execute(`ALTER TABLE momentum_snapshots ADD COLUMN market_cap_usd REAL`);
   } catch (error) {
     if (!String(error).includes('duplicate column')) throw error;
   }
