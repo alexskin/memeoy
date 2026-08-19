@@ -130,10 +130,27 @@ export async function runTursoSync(): Promise<void> {
     .prepare(`SELECT * FROM positions WHERE id > ? ORDER BY id ASC LIMIT ?`)
     .all(positionsLastId, CATCHUP_BATCH_SIZE) as any[];
   const openPositionsRows = db.prepare(`SELECT * FROM positions WHERE status = 'open'`).all() as any[];
+  // Bounded re-push of the most recent positions by id REGARDLESS of status
+  // - catches the close transition itself, which openPositionsRows alone
+  // cannot: once a position's id has advanced past positionsLastId, its
+  // ONLY path back into a sync push was previously "still open" - the
+  // instant it closes it drops out of that query, and (since its id is
+  // already behind the cursor) out of newPositionsRows too, so the final
+  // closed_x/realized_pnl state could get permanently stranded on Turso as
+  // stale 'open' if the worker restarted (or just missed a tick) between
+  // the position closing locally and the next sync tick seeing it while
+  // still open. Confirmed live 2026-08-19: exactly this happened to a
+  // position that closed during a run of closely-spaced worker restarts.
+  const recentPositionsRows = db.prepare(`SELECT * FROM positions ORDER BY id DESC LIMIT ?`).all(SMALL_MUTABLE_TABLE_WINDOW) as any[];
   // Open positions mutate every tick (peak/pnl) and are always re-pushed;
-  // don't let them also count toward the incremental cursor twice.
-  const openIds = new Set(openPositionsRows.map((r) => r.id));
-  const positionsRows = [...openPositionsRows, ...newPositionsRows.filter((r) => !openIds.has(r.id))];
+  // don't let any row count toward the push array twice.
+  const includedIds = new Set<number>();
+  const positionsRows: any[] = [];
+  for (const r of [...openPositionsRows, ...recentPositionsRows, ...newPositionsRows]) {
+    if (includedIds.has(r.id)) continue;
+    includedIds.add(r.id);
+    positionsRows.push(r);
+  }
 
   const filterResultsLastId = getLastSyncedId('filter_results');
   const filterResultsRows = db
