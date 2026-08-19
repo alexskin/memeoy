@@ -166,11 +166,22 @@ export async function runTursoSync(): Promise<void> {
   const poolIdPlaceholder = poolIdList.length > 0 ? poolIdList.map(() => '?').join(',') : 'NULL';
 
   const detectedPoolsLastId = getLastSyncedId('detected_pools');
-  const detectedPoolsRows = db
-    .prepare(
-      `SELECT * FROM detected_pools WHERE status IN ('pending','filtering','watching') OR id IN (${poolIdPlaceholder}) OR id > ? ORDER BY id ASC LIMIT ?`,
-    )
-    .all(...poolIdList, detectedPoolsLastId, CATCHUP_BATCH_SIZE) as any[];
+  // Two separate queries, not one combined "OR ... LIMIT N" - the active-
+  // status set alone can be as large as momentumMaxWatchlistSize (450), so
+  // a single shared LIMIT could silently truncate away specific rows that
+  // filter_results/momentum_snapshots/agent_decisions/positions actually
+  // reference this tick (confirmed live: FK constraint failures because a
+  // referenced pool id fell outside the LIMIT window). The "must include"
+  // set (still-active + referenced) is never capped; only the id-based
+  // historical catch-up portion is.
+  const mustIncludeRows = db
+    .prepare(`SELECT * FROM detected_pools WHERE status IN ('pending','filtering','watching') OR id IN (${poolIdPlaceholder})`)
+    .all(...poolIdList) as any[];
+  const catchupRows = db
+    .prepare(`SELECT * FROM detected_pools WHERE id > ? ORDER BY id ASC LIMIT ?`)
+    .all(detectedPoolsLastId, CATCHUP_BATCH_SIZE) as any[];
+  const mustIncludeIds = new Set(mustIncludeRows.map((r) => r.id));
+  const detectedPoolsRows = [...mustIncludeRows, ...catchupRows.filter((r) => !mustIncludeIds.has(r.id))];
 
   const referencedFillIds = new Set<number>();
   for (const r of positionsRows) {
