@@ -7,7 +7,8 @@
 // PriceSource (Raydium AMM pool, pump.fun bonding curve, ...) so this file
 // has no venue-specific code at all.
 import { simulateSell, totalFeesPaid } from '../fillSimulator/fillSimulator';
-import { insertFill, updatePositionPeak } from '../db';
+import { insertFill, updatePositionPeak, getPositionById } from '../db';
+import { sendDiscordNotification, formatPositionClosedMessage } from '../notify/discord';
 import * as ledger from './ledger';
 import { PriceSource, uiAmountToRaw } from '../priceSource/types';
 import { PEAK_PROFIT_UNSET, PositionStatus, StrategyConfig } from '../types';
@@ -473,6 +474,8 @@ export class PositionMonitor {
       ledger.finalizeFullyLiquidated(position.positionId, 'closed_tp', outcome.finalFill.id!, outcome.finalFill.fillExecutionPrice!, now, exitMarketCapUsd);
       this.untrack(position.positionId);
       this.broadcast('position.closed', { positionId: position.positionId, status: 'closed_tp', realizedPnlQuote: result.realizedPnlQuote });
+      const closedPosition = getPositionById(position.positionId);
+      if (closedPosition) void sendDiscordNotification(formatPositionClosedMessage(closedPosition));
     }
 
     return true;
@@ -535,6 +538,8 @@ export class PositionMonitor {
       realizedPnlQuote: netQuoteReceivedUi - position.quoteSizeInUi,
       aiExitReasoning,
     });
+    const closedPosition = getPositionById(position.positionId);
+    if (closedPosition) void sendDiscordNotification(formatPositionClosedMessage(closedPosition));
 
     return true;
   }

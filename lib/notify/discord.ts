@@ -4,6 +4,7 @@
 // bot token, nothing wallet-related.
 import { DISCORD_WEBHOOK_URL } from '../config/env';
 import { logger } from '../logger';
+import { Position, PositionStatus } from '../types';
 
 export async function sendDiscordNotification(content: string): Promise<void> {
   if (!DISCORD_WEBHOOK_URL) return;
@@ -53,6 +54,38 @@ export function formatPositionOpenedMessage(params: {
     `Stop-loss: -${config.stopLossPct}%`,
     targets ? `Célok: ${targets}` : null,
     exitLine,
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
+const CLOSE_REASON_LABEL: Record<Exclude<PositionStatus, 'open'>, string> = {
+  closed_tp: 'Take profit',
+  closed_sl: 'Stop-loss',
+  closed_timeout: 'Timeout',
+  closed_manual: 'Manuális zárás',
+  closed_ai_exit: 'AI kilépés',
+  closed_structural: 'Struktúra törés',
+};
+
+// Called once a position is FULLY closed (final leg, not an intermediate
+// scaled-take-profit partial) - same convention as the 'position.closed'
+// broadcast in positionMonitor.ts, which this mirrors.
+export function formatPositionClosedMessage(position: Position): string {
+  const { baseMint, tokenName, source, status, entryMarketCapUsd, exitMarketCapUsd, realizedPnlQuote, realizedPnlPct, aiExitReasoning } = position;
+  const pnlQuote = realizedPnlQuote ?? 0;
+  const pnlPct = realizedPnlPct ?? 0;
+  const emoji = pnlQuote >= 0 ? '🟢' : '🔴';
+  const reasonLabel = status === 'open' ? status : CLOSE_REASON_LABEL[status];
+
+  return [
+    `${emoji} **Pozíció zárva** — \`${source}\`${tokenName ? ` — **${tokenName}**` : ''} — ${reasonLabel}`,
+    `Token: \`${baseMint}\``,
+    entryMarketCapUsd != null || exitMarketCapUsd != null
+      ? `MC: $${entryMarketCapUsd?.toLocaleString('en-US', { maximumFractionDigits: 0 }) ?? '—'} → $${exitMarketCapUsd?.toLocaleString('en-US', { maximumFractionDigits: 0 }) ?? '—'}`
+      : null,
+    `P&L: ${pnlQuote >= 0 ? '+' : ''}${pnlPct.toFixed(1)}% (${pnlQuote >= 0 ? '+' : ''}${pnlQuote.toFixed(4)} SOL)`,
+    aiExitReasoning ? `Indoklás: ${aiExitReasoning}` : null,
   ]
     .filter(Boolean)
     .join('\n');
