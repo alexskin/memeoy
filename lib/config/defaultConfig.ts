@@ -177,7 +177,13 @@ export const DEFAULT_STRATEGY_CONFIG: StrategyConfig = {
   startingBalanceQuote: 10,
   maxConcurrentPositions: 5,
 
-  agentMode: 'propose-only',
+  // Was 'propose-only' - the dashboard's manual config-editing UI was
+  // removed (per the user's explicit request to have the AI fully own
+  // every threshold from trade/market outcomes, not hand-edited) so
+  // there's no human left in the loop to accept/reject a proposal anyway.
+  // heuristicTuner.ts's bounded-step rules and runnerReview.ts's
+  // missed-runner-driven proposals now take effect immediately.
+  agentMode: 'auto-apply',
   agentTriggerEveryNTrades: 10,
   agentMinIntervalMs: 6 * 60 * 60 * 1000,
   agentMinTradesForProposal: 10,

@@ -8,7 +8,6 @@ import { StatsStrip } from '../components/dashboard/StatsStrip';
 import { PositionsTable, LivePositionInfo, PositionRow } from '../components/dashboard/PositionsTable';
 import { TradeHistoryTable, TradeRow } from '../components/dashboard/TradeHistoryTable';
 import { EquityChart } from '../components/dashboard/EquityChart';
-import { StrategyConfigPanel } from '../components/dashboard/StrategyConfigPanel';
 import { AgentLog } from '../components/dashboard/AgentLog';
 import { ConnectionStatus } from '../components/dashboard/ConnectionStatus';
 import { WorkerControls, WorkerControlState } from '../components/dashboard/WorkerControls';
@@ -23,8 +22,12 @@ const READ_ONLY = process.env.NEXT_PUBLIC_READ_ONLY === 'true';
 // Alerts/Positions/History/Equity/Strategy/Agent) around what's actually a
 // different concern, not what table happened to exist: Watcher owns the
 // whole detection->decision lifecycle, Portfolio owns "what did the money
-// do", Strategy owns the config+tuner feedback loop.
-const TABS = ['Watcher', 'Portfolio', 'Strategy', 'Wallet Alerts'] as const;
+// do", Agent owns the self-tuning feedback loop. Manual strategy editing
+// was removed (agentMode: 'auto-apply' now, see lib/config/defaultConfig.ts)
+// - every threshold is tuned by the heuristic tuner + runner review from
+// real trade/market outcomes, not hand-edited, so there's nothing left for
+// a human-facing config form to do.
+const TABS = ['Watcher', 'Portfolio', 'Agent', 'Wallet Alerts'] as const;
 type Tab = (typeof TABS)[number];
 
 export default function Page() {
@@ -38,7 +41,6 @@ export default function Page() {
   const [trades, setTrades] = useState<TradeRow[]>([]);
   const [snapshots, setSnapshots] = useState<EquitySnapshot[]>([]);
   const [activeVersion, setActiveVersion] = useState<StrategyConfigVersion | null>(null);
-  const [history, setHistory] = useState<StrategyConfigVersion[]>([]);
   const [suggestions, setSuggestions] = useState<AgentSuggestion[]>([]);
   const [workerAlive, setWorkerAlive] = useState<boolean | null>(null);
   const [virtualBalance, setVirtualBalance] = useState<number | null>(null);
@@ -49,7 +51,7 @@ export default function Page() {
     // rows means less of app/api/pools's per-row Turso fan-out per request.
     const poolsLimit = READ_ONLY ? 40 : 100;
     const decisionsLimit = READ_ONLY ? 25 : 50;
-    const [poolsRes, decisionsRes, positionsRes, tradesRes, equityRes, configRes, historyRes, suggestionsRes, healthRes, controlRes, walletAlertsRes] =
+    const [poolsRes, decisionsRes, positionsRes, tradesRes, equityRes, configRes, suggestionsRes, healthRes, controlRes, walletAlertsRes] =
       await Promise.all([
         fetch(`/api/pools?limit=${poolsLimit}`).then((r) => r.json()),
         fetch(`/api/decisions?limit=${decisionsLimit}`).then((r) => r.json()),
@@ -57,7 +59,6 @@ export default function Page() {
         fetch('/api/trades').then((r) => r.json()),
         fetch('/api/equity').then((r) => r.json()),
         fetch('/api/config').then((r) => r.json()),
-        fetch('/api/config/history').then((r) => r.json()),
         fetch('/api/agent/suggestions').then((r) => r.json()),
         fetch('/api/health').then((r) => r.json()),
         fetch('/api/control').then((r) => r.json()),
@@ -69,7 +70,6 @@ export default function Page() {
     setTrades(tradesRes.trades);
     setSnapshots(equityRes.snapshots);
     setActiveVersion(configRes.activeVersion);
-    setHistory(historyRes.versions);
     setSuggestions(suggestionsRes.suggestions);
     setWorkerAlive(healthRes.workerAlive);
     setVirtualBalance(healthRes.virtualBalanceQuote);
@@ -333,19 +333,11 @@ export default function Page() {
         </>
       )}
 
-      {tab === 'Strategy' && (
-        <>
-          {activeVersion && (
-            <div className="panel">
-              <h2>Strategy configuration</h2>
-              <StrategyConfigPanel activeVersion={activeVersion} history={history} onSave={saveConfig} readOnly={READ_ONLY} />
-            </div>
-          )}
-          <div className="panel">
-            <h2>Self-tuning agent</h2>
-            <AgentLog suggestions={suggestions} onAccept={acceptSuggestion} onReject={rejectSuggestion} readOnly={READ_ONLY} />
-          </div>
-        </>
+      {tab === 'Agent' && (
+        <div className="panel">
+          <h2>Self-tuning agent</h2>
+          <AgentLog suggestions={suggestions} onAccept={acceptSuggestion} onReject={rejectSuggestion} readOnly={READ_ONLY} />
+        </div>
       )}
 
       {tab === 'Wallet Alerts' && activeVersion && (
