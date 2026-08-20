@@ -109,6 +109,13 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 let lastPoolEventAt = Date.now();
 const POOL_EVENT_STALE_MS = 5 * 60_000; // PumpSwap alone fires multiple times/sec live - 5min silence is unambiguous
 const WATCHDOG_INTERVAL_MS = 60_000;
+// Circuit-breaker state for the watchdog below - see its own comment for the
+// ~40h/full-monthly-RPC-quota incident (2026-08-20) this exists to bound.
+let consecutiveWatchdogFailures = 0;
+let watchdogTripped = false;
+let lastWatchdogAttemptAt = 0;
+const WATCHDOG_MIN_RETRY_INTERVAL_MS = POOL_EVENT_STALE_MS; // never attempt a resubscribe more often than once per stale-window
+const MAX_CONSECUTIVE_WATCHDOG_FAILURES = 3; // ~15min of unresolved staleness before giving up automatically
 
 interface DetectionContext {
   detectedPoolId: number;
@@ -541,6 +548,7 @@ async function main() {
 
   listeners.on('pool', async (updatedAccountInfo: KeyedAccountInfo) => {
     lastPoolEventAt = Date.now();
+    consecutiveWatchdogFailures = 0;
     try {
       const poolState = LIQUIDITY_STATE_LAYOUT_V4.decode(updatedAccountInfo.accountInfo.data);
       const poolOpenTime = parseInt(poolState.poolOpenTime.toString());
@@ -635,6 +643,7 @@ async function main() {
 
   listeners.on('pumpswapPool', (updatedAccountInfo: KeyedAccountInfo) => {
     lastPoolEventAt = Date.now();
+    consecutiveWatchdogFailures = 0;
     try {
       const poolAddress = updatedAccountInfo.accountId;
       const pool = decodePoolAccount(poolAddress, updatedAccountInfo.accountInfo.data);
@@ -729,6 +738,7 @@ async function main() {
 
   pumpFunListener.on('creation', (event) => {
     lastPoolEventAt = Date.now();
+    consecutiveWatchdogFailures = 0;
 
     // Creator-launch tracking - deliberately independent of
     // pumpfunPremigrationEnabled below (a pure watch/alert feature, never
@@ -940,6 +950,8 @@ async function main() {
 
   async function startDiscovery() {
     lastPoolEventAt = Date.now(); // avoid an immediate false-positive stale reading before the first post-(re)start event arrives
+    consecutiveWatchdogFailures = 0;
+    watchdogTripped = false; // a deliberate START (manual or PAUSE->RUN) clears any prior circuit-breaker trip
     await listeners.start({ quoteToken, cacheNewMarkets: CACHE_NEW_MARKETS });
     pumpFunListener.start(COMMITMENT_LEVEL);
     watchlistMonitor.start();
@@ -1058,6 +1070,20 @@ async function main() {
     });
   }, 10_000);
 
+  // ---- WS keepalive: most providers (confirmed live on Helius) silently
+  // drop a WebSocket after ~10 minutes with no activity on it. Root-caused a
+  // real ~20h total detection outage (2026-08-20): once that idle drop
+  // happens, @solana/web3.js's own internal reconnect logic doesn't back off
+  // cleanly and gets stuck fighting the provider's rate limiter (429 on every
+  // handshake attempt) - the watchdog below could only ever REACT to that
+  // already-broken state, never prevent it. A cheap RPC call well under the
+  // idle window keeps the same underlying WS "active" so it never becomes
+  // idle-timeout-eligible in the first place.
+  const KEEPALIVE_INTERVAL_MS = 4 * 60_000;
+  setInterval(() => {
+    connection.getSlot().catch((error) => logger.debug({ error: String(error) }, 'WS keepalive ping failed'));
+  }, KEEPALIVE_INTERVAL_MS);
+
   // ---- watchdog: detect a silently-dead listener subscription and try to
   // recover in-place by resubscribing. Only meaningful while we're supposed
   // to be watching at all (skip during a deliberate STOP). This can't fully
@@ -1066,12 +1092,48 @@ async function main() {
   // per the fresh 10s heartbeat log line either way, at minimum turns a
   // silent 15+ hour blind spot into a loud one within ~5 minutes.
   setInterval(async () => {
-    if (workerState === 'stopped') return;
+    if (workerState === 'stopped' || watchdogTripped) return;
     const staleMs = Date.now() - lastPoolEventAt;
     if (staleMs < POOL_EVENT_STALE_MS) return;
 
+    // Real ~40h incident (2026-08-20): this used to unconditionally stamp
+    // lastPoolEventAt = Date.now() right after a "successful" stop()+start()
+    // call, regardless of whether any real event actually came back in - so
+    // a resubscribe that silently didn't restore the connection still reset
+    // the stale clock, and the very next check 5 minutes later looked like a
+    // FRESH failure instead of a continuation of the same one. Only the real
+    // event handlers (pool/pumpswapPool/pump.fun creation) update
+    // lastPoolEventAt now, so consecutiveWatchdogFailures below can actually
+    // tell "still broken" apart from "recovered".
+    if (Date.now() - lastWatchdogAttemptAt < WATCHDOG_MIN_RETRY_INTERVAL_MS) return;
+    lastWatchdogAttemptAt = Date.now();
+    consecutiveWatchdogFailures++;
+
+    // Circuit breaker: @solana/web3.js's own internal WS reconnect logic has
+    // no backoff of its own (confirmed - this is a known, still-open upstream
+    // issue, not something a config flag fixes) and can spiral into a rapid,
+    // unbounded retry loop once triggered. That's what actually happened
+    // here: not just this 60s-interval watchdog, but the library's own
+    // internal reconnect hammered the provider for ~20h straight and burned
+    // through an entire monthly RPC credit quota. Capping OUR OWN repeated
+    // stop()+start() calls to a bounded few attempts, then giving up loudly
+    // instead of retrying forever, is the one lever available from this side
+    // - it can't force the library's internals to back off, but it stops
+    // adding fuel to the fire past a bounded point.
+    if (consecutiveWatchdogFailures > MAX_CONSECUTIVE_WATCHDOG_FAILURES) {
+      if (!watchdogTripped) {
+        watchdogTripped = true;
+        logger.error(
+          { consecutiveWatchdogFailures, staleMinutes: (staleMs / 60_000).toFixed(1) },
+          `WATCHDOG: CIRCUIT BREAKER TRIPPED - ${MAX_CONSECUTIVE_WATCHDOG_FAILURES} straight resubscribe attempts did not restore real events. Giving up automatically to avoid hammering the RPC provider further - a MANUAL worker restart is required.`,
+        );
+        broadcast('worker.watchdogAlert', { staleMs, action: 'circuit-breaker-tripped' });
+      }
+      return;
+    }
+
     logger.error(
-      { staleMs, staleMinutes: (staleMs / 60_000).toFixed(1) },
+      { staleMs, staleMinutes: (staleMs / 60_000).toFixed(1), consecutiveWatchdogFailures },
       'WATCHDOG: no pool/pumpswapPool events received in over 5 minutes - the listener subscription looks dead. Attempting to resubscribe.',
     );
     broadcast('worker.watchdogAlert', { staleMs, action: 'resubscribing' });
@@ -1079,10 +1141,9 @@ async function main() {
     try {
       await listeners.stop();
       await listeners.start({ quoteToken, cacheNewMarkets: CACHE_NEW_MARKETS });
-      lastPoolEventAt = Date.now();
-      logger.info({}, 'WATCHDOG: resubscribed to pool listeners');
+      logger.info({ consecutiveWatchdogFailures }, 'WATCHDOG: resubscribe call completed - waiting to confirm a real event actually arrives');
     } catch (error) {
-      logger.error({ error: String(error) }, 'WATCHDOG: resubscribe attempt failed - manual worker restart likely needed');
+      logger.error({ error: String(error), consecutiveWatchdogFailures }, 'WATCHDOG: resubscribe attempt failed');
     }
   }, WATCHDOG_INTERVAL_MS);
 
